@@ -443,3 +443,28 @@ body {
 }
 .send-btn:hover:not(:disabled) { background: rgba(255,255,255,0.2); }
 .send-btn:disabled { opacity: 0.35; cursor: default; }
+
+/* ── Streaming cursor ────────────────────────────── */
+.streaming-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 0.85em;
+  background: rgba(255, 255, 255, 0.6);
+  margin-left: 2px;
+  vertical-align: middle;
+  border-radius: 1px;
+  animation: cursor-blink 0.7s ease-in-out infinite;
+}
+
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+/* ── Tool status text ────────────────────────────── */
+.tool-status-text {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.38);
+  font-style: italic;
+  letter-spacing: 0.01em;
+}

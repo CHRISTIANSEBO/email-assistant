@@ -1,9 +1,11 @@
 import json
+import queue
 import sqlite3
 import threading
 import uuid
 from pathlib import Path
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response, stream_with_context
+from langchain_core.messages import AIMessageChunk, ToolMessage
 from langgraph.checkpoint.memory import MemorySaver
 from agent.assistant import create_agent
 import builtins as _builtins
@@ -46,8 +48,11 @@ _state = {
     'ready': threading.Event(),
     'result': None,
     'error': None,
+    'stream_queue': None,
 }
 
+
+# ── Non-streaming input override (used by /chat) ──────────────────────────────
 
 def _make_web_input(rid: str):
     def _web_input(prompt: str) -> str:
@@ -64,6 +69,27 @@ def _make_web_input(rid: str):
         return _state['input_response'] or 'n'
     return _web_input
 
+
+# ── Streaming input override (used by /stream) ────────────────────────────────
+
+def _make_web_input_streaming(rid: str, out_queue: queue.Queue):
+    def _web_input(prompt: str) -> str:
+        with _lock:
+            if _state['active_rid'] != rid:
+                return 'n'
+        input_event = threading.Event()
+        with _lock:
+            _state['pending_prompt'] = prompt
+            _state['input_event'] = input_event
+            _state['input_response'] = None
+        out_queue.put({'type': 'confirmation', 'prompt': prompt})
+        input_event.wait()
+        out_queue.put({'type': 'confirmation_resolved'})
+        return _state['input_response'] or 'n'
+    return _web_input
+
+
+# ── Non-streaming agent runner (used by /chat) ────────────────────────────────
 
 def _run_agent(user_input: str, rid: str) -> None:
     global _thread_id
@@ -93,10 +119,9 @@ def _run_agent(user_input: str, rid: str) -> None:
                 _state['error'] = None
     except Exception as e:
         msg = str(e)
-        if '429' in msg or 'rate_limit' in msg.lower():
-            err = "I'm being rate-limited right now. Wait a moment and try again."
-        else:
-            err = f"Something went wrong: {type(e).__name__}: {e}"
+        err = ("I'm being rate-limited right now. Wait a moment and try again."
+               if '429' in msg or 'rate_limit' in msg.lower()
+               else f"Something went wrong: {type(e).__name__}: {e}")
         with _lock:
             if _state['active_rid'] == rid:
                 _state['error'] = err
@@ -108,14 +133,94 @@ def _run_agent(user_input: str, rid: str) -> None:
                 _state['ready'].set()
 
 
+# ── Streaming helpers ─────────────────────────────────────────────────────────
+
+def _process_stream(stream_gen, rid: str, out_queue: queue.Queue) -> None:
+    """Iterate a LangGraph message stream and push SSE-ready dicts to out_queue."""
+    last_tool_name = None
+    for chunk, _metadata in stream_gen:
+        with _lock:
+            if _state['active_rid'] != rid:
+                return
+
+        if isinstance(chunk, AIMessageChunk):
+            content = chunk.content
+            if isinstance(content, str) and content:
+                out_queue.put({'type': 'token', 'text': content})
+            elif isinstance(content, list):
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    btype = block.get('type', '')
+                    if btype == 'text' and block.get('text'):
+                        out_queue.put({'type': 'token', 'text': block['text']})
+                    elif btype == 'tool_use' and block.get('name'):
+                        name = block['name']
+                        if name != last_tool_name:
+                            out_queue.put({'type': 'tool_start', 'tool': name})
+                            last_tool_name = name
+
+            # tool_call_chunks is an alternative Anthropic streaming path
+            for tc in (getattr(chunk, 'tool_call_chunks', None) or []):
+                name = tc.get('name') if isinstance(tc, dict) else getattr(tc, 'name', None)
+                if name and name != last_tool_name:
+                    out_queue.put({'type': 'tool_start', 'tool': name})
+                    last_tool_name = name
+
+        elif isinstance(chunk, ToolMessage):
+            last_tool_name = None
+            out_queue.put({'type': 'tool_done'})
+
+
+def _run_agent_streaming(user_input: str, rid: str, out_queue: queue.Queue) -> None:
+    global _thread_id
+    original_input = _builtins.input
+    _builtins.input = _make_web_input_streaming(rid, out_queue)
+    try:
+        with _lock:
+            tid = _thread_id
+
+        def _do_stream(thread_id: str):
+            return agent.stream(
+                {'messages': [{'role': 'user', 'content': user_input}]},
+                config={'configurable': {'thread_id': thread_id}},
+                stream_mode='messages'
+            )
+
+        try:
+            _process_stream(_do_stream(tid), rid, out_queue)
+        except ValueError as e:
+            if 'INVALID_CHAT_HISTORY' not in str(e):
+                raise
+            with _lock:
+                _thread_id = f"web-{uuid.uuid4().hex[:8]}"
+                tid = _thread_id
+            _process_stream(_do_stream(tid), rid, out_queue)
+
+        with _lock:
+            if _state['active_rid'] == rid:
+                out_queue.put({'type': 'done', 'thread_id': _thread_id})
+    except Exception as e:
+        msg = str(e)
+        err = ("I'm being rate-limited right now. Wait a moment and try again."
+               if '429' in msg or 'rate_limit' in msg.lower()
+               else f"Something went wrong: {type(e).__name__}: {e}")
+        with _lock:
+            if _state['active_rid'] == rid:
+                out_queue.put({'type': 'error', 'message': err})
+    finally:
+        _builtins.input = original_input
+        with _lock:
+            if _state['active_rid'] == rid:
+                _state['stream_queue'] = None
+
+
+# ── Shared wait helper (non-streaming only) ───────────────────────────────────
+
 def _wait_for_agent() -> dict:
-    timeout = 120  # seconds
+    timeout = 120
     deadline = threading.Event()
-
-    def _expire():
-        deadline.set()
-
-    timer = threading.Timer(timeout, _expire)
+    timer = threading.Timer(timeout, deadline.set)
     timer.start()
     try:
         while not deadline.is_set():
@@ -132,6 +237,8 @@ def _wait_for_agent() -> dict:
         timer.cancel()
     return {'type': 'message', 'reply': 'Request timed out. Please try again.'}
 
+
+# ── DB routes ─────────────────────────────────────────────────────────────────
 
 @app.route('/chats', methods=['GET'])
 def list_chats():
@@ -174,6 +281,8 @@ def delete_chat(chat_id: str):
     return jsonify({'ok': True})
 
 
+# ── Non-streaming chat (used by main.py terminal REPL) ───────────────────────
+
 @app.route('/chat', methods=['POST'])
 def chat():
     global _thread_id
@@ -183,7 +292,6 @@ def chat():
     if not user_input:
         return jsonify({'error': 'Empty message'}), 400
 
-    # Restore thread_id for existing chats
     if chat_id:
         with _db() as conn:
             row = conn.execute("SELECT thread_id FROM chats WHERE id = ?", (chat_id,)).fetchone()
@@ -213,6 +321,7 @@ def chat():
         _state['error'] = None
         _state['pending_prompt'] = None
         _state['input_event'] = None
+        _state['stream_queue'] = None
     _state['ready'].clear()
     threading.Thread(target=_run_agent, args=(user_input, rid), daemon=True).start()
     result = _wait_for_agent()
@@ -222,17 +331,117 @@ def chat():
     return jsonify(result)
 
 
+# ── Streaming chat endpoint ───────────────────────────────────────────────────
+
+@app.route('/stream', methods=['POST'])
+def stream_chat():
+    global _thread_id
+    body = request.json or {}
+    user_input = body.get('message', '').strip()
+    chat_id = body.get('chat_id') or None
+    if not user_input:
+        return jsonify({'error': 'Empty message'}), 400
+
+    if chat_id:
+        with _db() as conn:
+            row = conn.execute("SELECT thread_id FROM chats WHERE id = ?", (chat_id,)).fetchone()
+        if row and row['thread_id']:
+            with _lock:
+                _thread_id = row['thread_id']
+    else:
+        chat_id = uuid.uuid4().hex
+        with _lock:
+            tid = _thread_id
+        with _db() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO chats (id, title, messages, thread_id) VALUES (?, ?, ?, ?)",
+                (chat_id, user_input[:60], '[]', tid)
+            )
+
+    out_queue: queue.Queue = queue.Queue()
+    rid = uuid.uuid4().hex
+
+    with _lock:
+        old_event = _state['input_event']
+        if old_event and not old_event.is_set():
+            _state['input_response'] = 'n'
+            _state['input_event'] = None
+            _thread_id = f"web-{uuid.uuid4().hex[:8]}"
+            old_event.set()
+        _state['active_rid'] = rid
+        _state['result'] = None
+        _state['error'] = None
+        _state['pending_prompt'] = None
+        _state['input_event'] = None
+        _state['stream_queue'] = out_queue
+    _state['ready'].clear()
+
+    threading.Thread(
+        target=_run_agent_streaming,
+        args=(user_input, rid, out_queue),
+        daemon=True
+    ).start()
+
+    def generate():
+        try:
+            with _lock:
+                tid = _thread_id
+            yield f"data: {json.dumps({'type': 'start', 'chat_id': chat_id, 'thread_id': tid})}\n\n"
+
+            waiting_confirmation = False
+            while True:
+                # Allow longer wait when user is deciding on a confirmation
+                timeout = 300 if waiting_confirmation else 120
+                try:
+                    event = out_queue.get(timeout=timeout)
+                except queue.Empty:
+                    msg = ('Confirmation timed out.'
+                           if waiting_confirmation else 'Request timed out.')
+                    yield f"data: {json.dumps({'type': 'error', 'message': msg})}\n\n"
+                    break
+
+                yield f"data: {json.dumps(event)}\n\n"
+
+                if event['type'] == 'confirmation':
+                    waiting_confirmation = True
+                elif event['type'] == 'confirmation_resolved':
+                    waiting_confirmation = False
+                elif event['type'] in ('done', 'error'):
+                    break
+        except GeneratorExit:
+            # Client disconnected — invalidate this request so the agent thread exits early
+            with _lock:
+                if _state['active_rid'] == rid:
+                    _state['active_rid'] = None
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+        }
+    )
+
+
+# ── Confirmation endpoint (works for both streaming and non-streaming) ────────
+
 @app.route('/confirm', methods=['POST'])
 def confirm():
-    answer = 'y' if request.json.get('confirmed') else 'n'
+    answer = 'y' if (request.json or {}).get('confirmed') else 'n'
     with _lock:
         event = _state['input_event']
         if not event or event.is_set():
             return jsonify({'error': 'No pending confirmation'}), 400
         _state['input_response'] = answer
         _state['input_event'] = None
+        is_streaming = _state['stream_queue'] is not None
     _state['ready'].clear()
     event.set()
+
+    if is_streaming:
+        # SSE stream delivers subsequent tokens; just acknowledge
+        return jsonify({'ok': True})
     return jsonify(_wait_for_agent())
 
 

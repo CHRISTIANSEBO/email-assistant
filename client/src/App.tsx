@@ -8,6 +8,17 @@ import './App.css';
 type Message = { role: 'user' | 'assistant'; text: string };
 type Confirmation = { prompt: string };
 
+const TOOL_LABELS: Record<string, string> = {
+  read_email: 'Reading your inbox...',
+  sort_emails: 'Sorting emails by priority...',
+  open_email: 'Opening email...',
+  send_email: 'Preparing to send...',
+  summarize_email: 'Summarizing email...',
+  unsubscribe_from_email: 'Processing unsubscribe...',
+};
+
+const QUICK_ACTIONS = ['Read inbox', 'Sort by priority', 'Check promotions', 'Unsubscribe'];
+
 function parseMarkdown(text: string): string {
   function esc(s: string) {
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -66,8 +77,6 @@ function parseMarkdown(text: string): string {
   return out.join('');
 }
 
-const QUICK_ACTIONS = ['Read inbox', 'Sort by priority', 'Check promotions', 'Unsubscribe'];
-
 export default function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -77,29 +86,32 @@ export default function App() {
   const [chatId, setChatId] = useState<string | null>(null);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [recentChats, setRecentChats] = useState<RecentChat[]>([]);
+  const [streamingText, setStreamingText] = useState('');
+  const [toolStatus, setToolStatus] = useState<string | null>(null);
+
   const chatIdRef = useRef<string | null>(null);
   const threadIdRef = useRef<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const requestIdRef = useRef<number>(0);
 
   useEffect(() => {
     fetch('/chats')
       .then(r => r.json())
       .then((data: RecentChat[]) => setRecentChats(data))
-      .catch(() => {/* silently ignore — sidebar just stays empty */});
+      .catch(() => {});
   }, []);
 
-  useEffect(() => {
-    chatIdRef.current = chatId;
-  }, [chatId]);
-
-  useEffect(() => {
-    threadIdRef.current = threadId;
-  }, [threadId]);
+  useEffect(() => { chatIdRef.current = chatId; }, [chatId]);
+  useEffect(() => { threadIdRef.current = threadId; }, [threadId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, confirmation]);
+  }, [messages, confirmation, streamingText, toolStatus]);
+
+  // Cancel any in-flight stream on unmount
+  useEffect(() => () => { abortRef.current?.abort(); }, []);
 
   const saveChat = async (msgs: Message[], id: string, tid: string) => {
     const title = msgs.find(m => m.role === 'user')?.text.slice(0, 60) ?? 'Untitled';
@@ -118,71 +130,143 @@ export default function App() {
     }
   };
 
-  const handleResponse = (
-    data: { type: string; reply: string; prompt?: string; chat_id?: string; thread_id?: string },
-    userMessages: Message[]
-  ) => {
-    if (data.type === 'confirmation') {
-      setConfirmation({ prompt: data.prompt ?? '' });
-    } else {
-      const assistantMsg: Message = { role: 'assistant', text: data.reply };
-      const updatedMessages = [...userMessages, assistantMsg];
-      setMessages(updatedMessages);
-      setConfirmation(null);
-
-      const id = data.chat_id ?? chatIdRef.current;
-      const tid = data.thread_id ?? threadIdRef.current;
-      if (id) {
-        setChatId(id);
-        if (tid) setThreadId(tid);
-        saveChat(updatedMessages, id, tid ?? '');
-      }
-    }
-    setLoading(false);
-  };
-
   const sendMessage = async (text?: string) => {
     const msg = (text ?? input).trim();
     if (!msg || loading) return;
+
+    // Cancel any previous in-flight stream
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const myReqId = ++requestIdRef.current;
+
     const userMsg: Message = { role: 'user', text: msg };
     const updatedMessages = [...messages, userMsg];
     setMessages(updatedMessages);
     setInput('');
     setLoading(true);
     setError(null);
+    setStreamingText('');
+    setToolStatus(null);
+    setConfirmation(null);
+
+    let fullText = '';
+    let streamChatId = chatIdRef.current;
+    let streamThreadId = threadIdRef.current;
+
     try {
-      const res = await fetch('/chat', {
+      const res = await fetch('/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: msg, chat_id: chatIdRef.current }),
+        signal: controller.signal,
       });
+
       if (!res.ok) throw new Error(`Server error ${res.status}`);
-      handleResponse(await res.json(), updatedMessages);
+      if (!res.body) throw new Error('No response body from server.');
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const readResult = await reader.read().catch(() => null);
+        if (!readResult || readResult.done) break;
+
+        buffer += decoder.decode(readResult.value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const jsonStr = line.slice(6).trim();
+          if (!jsonStr) continue;
+
+          let event: Record<string, unknown>;
+          try { event = JSON.parse(jsonStr); } catch { continue; }
+
+          // Discard events from a superseded request
+          if (requestIdRef.current !== myReqId) return;
+
+          switch (event.type) {
+            case 'start':
+              streamChatId = (event.chat_id as string) ?? streamChatId;
+              streamThreadId = (event.thread_id as string) ?? streamThreadId;
+              if (streamChatId) { setChatId(streamChatId); chatIdRef.current = streamChatId; }
+              if (streamThreadId) { setThreadId(streamThreadId); threadIdRef.current = streamThreadId; }
+              break;
+
+            case 'token':
+              fullText += (event.text as string) ?? '';
+              setStreamingText(fullText);
+              setToolStatus(null);
+              break;
+
+            case 'tool_start':
+              setToolStatus(TOOL_LABELS[event.tool as string] ?? 'Working...');
+              break;
+
+            case 'tool_done':
+              setToolStatus(null);
+              break;
+
+            case 'confirmation':
+              setConfirmation({ prompt: (event.prompt as string) ?? '' });
+              break;
+
+            case 'confirmation_resolved':
+              setConfirmation(null);
+              break;
+
+            case 'done': {
+              const finalThreadId = (event.thread_id as string) ?? streamThreadId ?? '';
+              if (finalThreadId) { setThreadId(finalThreadId); threadIdRef.current = finalThreadId; }
+              const assistantMsg: Message = { role: 'assistant', text: fullText };
+              const finalMessages = [...updatedMessages, assistantMsg];
+              setMessages(finalMessages);
+              setStreamingText('');
+              setToolStatus(null);
+              setLoading(false);
+              if (streamChatId) saveChat(finalMessages, streamChatId, finalThreadId);
+              break;
+            }
+
+            case 'error':
+              setError((event.message as string) ?? 'Something went wrong.');
+              setStreamingText('');
+              setToolStatus(null);
+              setLoading(false);
+              break;
+          }
+        }
+      }
     } catch (e) {
+      if (requestIdRef.current !== myReqId) return;
+      if ((e as Error).name === 'AbortError') return;
       setError(e instanceof Error ? e.message : 'Failed to reach the server.');
       setLoading(false);
+      setStreamingText('');
+      setToolStatus(null);
     }
   };
 
+  // In streaming mode /confirm just unblocks the agent; the SSE stream delivers the rest
   const doConfirm = async (confirmed: boolean) => {
     setConfirmation(null);
-    setLoading(true);
-    setError(null);
     try {
-      const res = await fetch('/confirm', {
+      await fetch('/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ confirmed }),
       });
-      if (!res.ok) throw new Error(`Server error ${res.status}`);
-      handleResponse(await res.json(), messages);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to reach the server.');
+    } catch {
+      setError('Confirmation failed.');
       setLoading(false);
     }
   };
 
   const newChat = () => {
+    abortRef.current?.abort();
     setMessages([]);
     setConfirmation(null);
     setLoading(false);
@@ -190,6 +274,8 @@ export default function App() {
     setError(null);
     setChatId(null);
     setThreadId(null);
+    setStreamingText('');
+    setToolStatus(null);
     chatIdRef.current = null;
     threadIdRef.current = null;
     inputRef.current?.focus();
@@ -207,6 +293,8 @@ export default function App() {
       threadIdRef.current = data.thread_id ?? null;
       setConfirmation(null);
       setError(null);
+      setStreamingText('');
+      setToolStatus(null);
     } catch {
       setError('Failed to load chat.');
     }
@@ -217,12 +305,10 @@ export default function App() {
       await fetch(`/chats/${id}`, { method: 'DELETE' });
       setRecentChats(prev => prev.filter(c => c.id !== id));
       if (chatIdRef.current === id) newChat();
-    } catch {
-      // Silently ignore
-    }
+    } catch {}
   };
 
-  const isEmpty = messages.length === 0 && !loading;
+  const isEmpty = messages.length === 0 && !loading && !streamingText;
 
   const menuItems: StaggeredMenuItem[] = [
     { label: 'New Chat',    ariaLabel: 'Start a new chat',        onClick: newChat },
@@ -254,7 +340,6 @@ export default function App() {
         onDeleteChat={deleteChat}
       />
 
-      {/* Main */}
       <main className="main">
         <div className="main-bg">
           <DarkVeil speed={0.5} />
@@ -323,6 +408,30 @@ export default function App() {
                   </div>
                 ))}
 
+                {/* Tool activity indicator */}
+                {toolStatus && !streamingText && (
+                  <div className="message assistant typing-msg">
+                    <span className="tool-status-text">{toolStatus}</span>
+                  </div>
+                )}
+
+                {/* Live streaming response */}
+                {streamingText && (
+                  <div className="message assistant">
+                    <span dangerouslySetInnerHTML={{ __html: parseMarkdown(streamingText) }} />
+                    <span className="streaming-cursor" aria-hidden="true" />
+                  </div>
+                )}
+
+                {/* Initial thinking dots — shown before first token or tool event */}
+                {loading && !streamingText && !toolStatus && (
+                  <div className="message assistant typing-msg">
+                    <span className="typing-dot" />
+                    <span className="typing-dot" />
+                    <span className="typing-dot" />
+                  </div>
+                )}
+
                 {confirmation && (
                   <div className="confirm-card">
                     <p className="confirm-prompt">{confirmation.prompt}</p>
@@ -339,13 +448,6 @@ export default function App() {
                   </div>
                 )}
 
-                {loading && (
-                  <div className="message assistant typing-msg">
-                    <span className="typing-dot" />
-                    <span className="typing-dot" />
-                    <span className="typing-dot" />
-                  </div>
-                )}
                 <div ref={bottomRef} />
               </div>
 
