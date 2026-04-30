@@ -1,0 +1,84 @@
+.unsub-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.unsub-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+  transition: background 0.15s;
+}
+.unsub-row:hover { background: rgba(255, 255, 255, 0.07); }
+
+.unsub-logo {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  object-fit: contain;
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 3px;
+}
+
+.unsub-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.unsub-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.85);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.unsub-addr {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.32);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.unsub-btn {
+  flex-shrink: 0;
+  padding: 6px 15px;
+  border-radius: 7px;
+  background: rgba(240, 80, 80, 0.08);
+  border: 1px solid rgba(240, 80, 80, 0.22);
+  color: rgba(255, 120, 120, 0.9);
+  font-size: 13px;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.unsub-btn:hover {
+  background: rgba(240, 80, 80, 0.2);
+  color: rgba(255, 140, 140, 1);
+}
+
+.unsub-loading {
+  display: flex;
+  gap: 6px;
+  padding: 48px 0;
+  align-items: center;
+}
+
+.unsub-empty {
+  color: rgba(255, 255, 255, 0.32);
+  font-size: 14px;
+  padding: 48px 0;
+  text-align: center;
+}

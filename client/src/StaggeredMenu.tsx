@@ -20,6 +20,13 @@ export interface RecentChat {
   title: string;
 }
 
+export interface TemplateItem {
+  id: string;
+  name: string;
+  subject: string;
+  body: string;
+}
+
 export interface StaggeredMenuProps {
   position?: 'left' | 'right';
   colors?: string[];
@@ -42,6 +49,11 @@ export interface StaggeredMenuProps {
   recentChats?: RecentChat[];
   onLoadChat?: (id: string) => void;
   onDeleteChat?: (id: string) => void;
+  searchQuery?: string;
+  onSearchChange?: (q: string) => void;
+  templates?: TemplateItem[];
+  onUseTemplate?: (t: TemplateItem) => void;
+  onDeleteTemplate?: (id: string) => void;
 }
 
 export const StaggeredMenu: React.FC<StaggeredMenuProps> = ({
@@ -66,6 +78,11 @@ export const StaggeredMenu: React.FC<StaggeredMenuProps> = ({
   recentChats = [],
   onLoadChat,
   onDeleteChat,
+  searchQuery = '',
+  onSearchChange,
+  templates = [],
+  onUseTemplate,
+  onDeleteTemplate,
 }) => {
   const [open, setOpen] = useState(false);
   const openRef = useRef(false);
@@ -435,9 +452,23 @@ export const StaggeredMenu: React.FC<StaggeredMenuProps> = ({
             )}
           </ul>
 
+          {onSearchChange && (
+            <div className="sm-search">
+              <input
+                type="search"
+                className="sm-search-input"
+                placeholder="Search conversations..."
+                value={searchQuery}
+                onChange={e => onSearchChange(e.target.value)}
+              />
+            </div>
+          )}
+
           {recentChats.length > 0 && (
             <div className="sm-recents">
-              <h3 className="sm-recents-title">Recents</h3>
+              <h3 className="sm-recents-title">
+                {searchQuery ? 'Results' : 'Recents'}
+              </h3>
               <ul className="sm-recents-list" role="list">
                 {recentChats.map(chat => (
                   <li key={chat.id} className="sm-recents-item">
@@ -454,6 +485,35 @@ export const StaggeredMenu: React.FC<StaggeredMenuProps> = ({
                         className="sm-recents-delete"
                         aria-label="Delete chat"
                         onClick={e => { e.stopPropagation(); onDeleteChat(chat.id); }}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {templates.length > 0 && (
+            <div className="sm-templates">
+              <h3 className="sm-recents-title">Templates</h3>
+              <ul className="sm-recents-list" role="list">
+                {templates.map(t => (
+                  <li key={t.id} className="sm-recents-item">
+                    <button
+                      type="button"
+                      className="sm-recents-link"
+                      onClick={() => { onUseTemplate?.(t); if (closeOnItemClick) closeMenu(); }}
+                    >
+                      {t.name}
+                    </button>
+                    {onDeleteTemplate && (
+                      <button
+                        type="button"
+                        className="sm-recents-delete"
+                        aria-label="Delete template"
+                        onClick={e => { e.stopPropagation(); onDeleteTemplate(t.id); }}
                       >
                         ×
                       </button>

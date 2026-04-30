@@ -3,7 +3,13 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
-SCOPES = ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.send']
+SCOPES = [
+    'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.send',
+    'https://www.googleapis.com/auth/userinfo.email',
+    'https://www.googleapis.com/auth/userinfo.profile',
+    'openid',
+]
 
 # Paths resolved relative to this file, not the working directory
 _BASE_DIR = Path(__file__).parent.parent
@@ -29,7 +35,6 @@ def _load_credentials() -> Credentials:
             try:
                 creds.refresh(Request())
             except Exception:
-                # Token revoked or expired — delete it and re-authenticate
                 _TOKEN_PATH.unlink(missing_ok=True)
                 creds = None
         if not creds:
@@ -40,6 +45,49 @@ def _load_credentials() -> Credentials:
             token.write(creds.to_json())
 
     return creds
+
+
+def is_authenticated() -> bool:
+    """Check if valid credentials exist without triggering a new OAuth flow."""
+    if not _TOKEN_PATH.exists():
+        return False
+    try:
+        creds = Credentials.from_authorized_user_file(str(_TOKEN_PATH))
+        if creds.valid:
+            return True
+        if creds.expired and creds.refresh_token:
+            from google.auth.transport.requests import Request
+            creds.refresh(Request())
+            with open(_TOKEN_PATH, 'w') as f:
+                f.write(creds.to_json())
+            return True
+        return False
+    except Exception:
+        return False
+
+
+def create_web_flow(redirect_uri: str):
+    """Create an OAuth2 flow suitable for web-based login."""
+    from google_auth_oauthlib.flow import Flow
+    return Flow.from_client_secrets_file(
+        str(_CREDENTIALS_PATH),
+        scopes=SCOPES,
+        redirect_uri=redirect_uri,
+    )
+
+
+def get_user_profile(creds) -> dict:
+    """Fetch the authenticated user's name, email, and profile picture."""
+    try:
+        service = build('oauth2', 'v2', credentials=creds)
+        info = service.userinfo().get().execute()
+        return {
+            'name': info.get('name', ''),
+            'email': info.get('email', ''),
+            'picture': info.get('picture', ''),
+        }
+    except Exception:
+        return {'name': '', 'email': '', 'picture': ''}
 
 
 def authenticate_gmail():
