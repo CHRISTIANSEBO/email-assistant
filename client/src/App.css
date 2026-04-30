@@ -14,6 +14,16 @@ body {
   overflow: hidden;
 }
 
+/* ── App layout (sidebar + chat) ─────────── */
+.app-layout {
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #08060f;
+}
+
+
 /* ── Sidebar ─────────────────────────────── */
 .sidebar {
   width: 260px;
@@ -220,9 +230,8 @@ body {
 .messages {
   flex: 1;
   width: 100%;
-  max-width: 900px;
   overflow-y: auto;
-  padding: 40px 32px 24px;
+  padding: 40px 48px 24px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -231,16 +240,16 @@ body {
 .messages::-webkit-scrollbar { display: none; width: 0; height: 0; }
 
 .message {
-  max-width: 85%;
   padding: 14px 18px;
   border-radius: 14px;
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1.7;
   word-break: break-word;
 }
 
 .message.user {
   align-self: flex-end;
+  max-width: 72%;
   background: rgba(255, 255, 255, 0.1);
   color: rgba(255, 255, 255, 0.9);
   border-bottom-right-radius: 4px;
@@ -248,9 +257,31 @@ body {
 
 .message.assistant {
   align-self: flex-start;
+  width: 100%;
+  max-width: 680px;
   background: rgba(255, 255, 255, 0.05);
   color: rgba(255, 255, 255, 0.82);
   border-bottom-left-radius: 4px;
+}
+
+/* When cards are present, remove the bubble — text + cards are styled separately */
+.message.assistant.has-cards {
+  max-width: 100%;
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+}
+
+.message-text-wrap {
+  max-width: 680px;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 14px 18px;
+  border-radius: 14px 14px 14px 4px;
+  margin-bottom: 8px;
+  font-size: 15px;
+  line-height: 1.7;
+  color: rgba(255, 255, 255, 0.82);
+  word-break: break-word;
 }
 
 .message.assistant p { margin-bottom: 6px; }
@@ -444,6 +475,59 @@ body {
 .send-btn:hover:not(:disabled) { background: rgba(255,255,255,0.2); }
 .send-btn:disabled { opacity: 0.35; cursor: default; }
 
+/* ── Quick reply chips ───────────────────────────── */
+.quick-reply-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.quick-reply-chip {
+  padding: 5px 14px;
+  border-radius: 20px;
+  background: rgba(140, 80, 240, 0.1);
+  border: 1px solid rgba(140, 80, 240, 0.28);
+  color: rgba(190, 150, 255, 0.9);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.quick-reply-chip:hover {
+  background: rgba(140, 80, 240, 0.22);
+  color: #fff;
+}
+
+/* ── Undo send toast ─────────────────────────────── */
+.undo-toast {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: 10px;
+  font-size: 14px;
+  color: rgba(255, 200, 80, 0.9);
+}
+
+.undo-btn {
+  padding: 4px 14px;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.18);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: rgba(255, 200, 80, 0.95);
+  font-size: 13px;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.undo-btn:hover { background: rgba(245, 158, 11, 0.3); }
+
 /* ── Streaming cursor ────────────────────────────── */
 .streaming-cursor {
   display: inline-block;
@@ -459,6 +543,51 @@ body {
 @keyframes cursor-blink {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0; }
+}
+
+/* ── Inbox view ──────────────────────────────────── */
+.inbox-view {
+  flex: 1;
+  width: 100%;
+  overflow-y: auto;
+  padding: 32px 48px 24px;
+  display: flex;
+  flex-direction: column;
+  scrollbar-width: none;
+}
+.inbox-view::-webkit-scrollbar { display: none; }
+
+.inbox-view-hdr {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.inbox-view-label {
+  font-size: 22px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.88);
+  letter-spacing: -0.3px;
+}
+
+.inbox-view-count {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.inbox-view-loading {
+  display: flex;
+  gap: 6px;
+  padding: 48px 0;
+  align-items: center;
+}
+
+.inbox-view-empty {
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 14px;
+  padding: 48px 0;
+  text-align: center;
 }
 
 /* ── Tool status text ────────────────────────────── */

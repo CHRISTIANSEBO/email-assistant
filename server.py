@@ -1,4 +1,5 @@
 import json
+import os
 import queue
 import sqlite3
 import threading
@@ -9,6 +10,7 @@ from langchain_core.messages import AIMessageChunk, ToolMessage
 from langgraph.checkpoint.memory import MemorySaver
 from agent.assistant import create_agent
 import builtins as _builtins
+import anthropic as _anthropic
 
 app = Flask(__name__)
 checkpointer = MemorySaver()
@@ -31,6 +33,15 @@ def _init_db():
                 title TEXT NOT NULL,
                 messages TEXT NOT NULL DEFAULT '[]',
                 thread_id TEXT NOT NULL,
+                created_at REAL NOT NULL DEFAULT (unixepoch('now'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS templates (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                subject TEXT NOT NULL DEFAULT '',
+                body TEXT NOT NULL DEFAULT '',
                 created_at REAL NOT NULL DEFAULT (unixepoch('now'))
             )
         """)
@@ -135,6 +146,30 @@ def _run_agent(user_input: str, rid: str) -> None:
 
 # ── Streaming helpers ─────────────────────────────────────────────────────────
 
+def _generate_quick_replies(email_content: str) -> list:
+    """Ask Claude Haiku for 3 short reply options based on an opened email."""
+    try:
+        client = _anthropic.Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
+        resp = client.messages.create(
+            model='claude-haiku-4-5-20251001',
+            max_tokens=120,
+            messages=[{
+                'role': 'user',
+                'content': (
+                    'Given this email, suggest exactly 3 very short reply options (max 7 words each). '
+                    'Return a JSON array only — no other text.\n\n'
+                    f'Email:\n{email_content[:700]}\n\n'
+                    'Format: ["reply one", "reply two", "reply three"]'
+                )
+            }]
+        )
+        text = resp.content[0].text.strip()
+        replies = json.loads(text)
+        return replies[:3] if isinstance(replies, list) else []
+    except Exception:
+        return []
+
+
 def _process_stream(stream_gen, rid: str, out_queue: queue.Queue) -> None:
     """Iterate a LangGraph message stream and push SSE-ready dicts to out_queue."""
     last_tool_name = None
@@ -170,6 +205,31 @@ def _process_stream(stream_gen, rid: str, out_queue: queue.Queue) -> None:
         elif isinstance(chunk, ToolMessage):
             last_tool_name = None
             out_queue.put({'type': 'tool_done'})
+
+            tool_name = getattr(chunk, 'name', None) or ''
+
+            # Structured email cards for read / sort
+            if tool_name in ('read_email', 'sort_emails'):
+                try:
+                    raw = chunk.content
+                    emails = json.loads(raw) if isinstance(raw, str) else raw
+                    if isinstance(emails, list) and emails:
+                        normalized = [
+                            e for e in emails
+                            if isinstance(e, dict) and e.get('subject') and e.get('sender')
+                        ]
+                        if normalized:
+                            out_queue.put({'type': 'email_list', 'emails': normalized})
+                except Exception:
+                    pass
+
+            # Quick reply suggestions after opening a full email
+            if tool_name == 'open_email':
+                content = chunk.content or ''
+                if isinstance(content, str) and 'Body:' in content:
+                    replies = _generate_quick_replies(content)
+                    if replies:
+                        out_queue.put({'type': 'quick_replies', 'replies': replies})
 
 
 def _run_agent_streaming(user_input: str, rid: str, out_queue: queue.Queue) -> None:
@@ -279,6 +339,97 @@ def delete_chat(chat_id: str):
     with _db() as conn:
         conn.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
     return jsonify({'ok': True})
+
+
+@app.route('/chats/search', methods=['GET'])
+def search_chats():
+    q = request.args.get('q', '').strip()
+    if len(q) < 2:
+        return jsonify([])
+    pattern = f'%{q}%'
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT id, title FROM chats WHERE title LIKE ? OR messages LIKE ? ORDER BY created_at DESC LIMIT 20",
+            (pattern, pattern)
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+# ── Templates ─────────────────────────────────────────────────────────────────
+
+@app.route('/templates', methods=['GET'])
+def list_templates():
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT id, name, subject, body FROM templates ORDER BY created_at DESC"
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/templates', methods=['POST'])
+def create_template():
+    body = request.json or {}
+    tid = uuid.uuid4().hex
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO templates (id, name, subject, body) VALUES (?, ?, ?, ?)",
+            (tid, body.get('name', 'Untitled'), body.get('subject', ''), body.get('body', ''))
+        )
+    return jsonify({'id': tid, 'ok': True})
+
+
+@app.route('/templates/<template_id>', methods=['DELETE'])
+def delete_template(template_id: str):
+    with _db() as conn:
+        conn.execute("DELETE FROM templates WHERE id = ?", (template_id,))
+    return jsonify({'ok': True})
+
+
+# ── Direct inbox fetch (bypasses Jean for speed) ──────────────────────────────
+
+_CATEGORY_LABEL = {
+    'primary':    'CATEGORY_PERSONAL',
+    'promotions': 'CATEGORY_PROMOTIONS',
+    'social':     'CATEGORY_SOCIAL',
+    'updates':    'CATEGORY_UPDATES',
+    'forums':     'CATEGORY_FORUMS',
+}
+
+@app.route('/inbox', methods=['GET'])
+def get_inbox():
+    from agent.tools import _get_service, _fetch_one_headers, URGENT_KEYWORDS
+    from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
+
+    category = request.args.get('category', '').lower()
+    sort_by  = request.args.get('sort', '')
+
+    if category == 'sent':
+        label_ids = ['SENT']
+    elif category in _CATEGORY_LABEL:
+        label_ids = ['INBOX', _CATEGORY_LABEL[category]]
+    else:
+        label_ids = ['INBOX']
+
+    try:
+        results = _get_service().users().messages().list(
+            userId='me', maxResults=20, labelIds=label_ids
+        ).execute()
+        msg_ids = [m['id'] for m in results.get('messages', [])]
+        if not msg_ids:
+            return jsonify([])
+
+        with ThreadPoolExecutor(max_workers=min(len(msg_ids), 10)) as ex:
+            futures = {ex.submit(_fetch_one_headers, mid): mid for mid in msg_ids}
+            emails = [f.result() for f in _as_completed(futures)]
+
+        if sort_by == 'priority':
+            for e in emails:
+                e['priority'] = sum(1 for kw in URGENT_KEYWORDS if kw in e['subject'].lower())
+            emails.sort(key=lambda e: e['priority'], reverse=True)
+
+        return jsonify(emails)
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
 
 
 # ── Non-streaming chat (used by main.py terminal REPL) ───────────────────────

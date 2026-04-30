@@ -52,16 +52,28 @@ def _fetch_one(msg_id: str) -> dict:
 
 
 def _fetch_one_headers(msg_id: str) -> dict:
-    """Fetch subject and sender only (no body) for a single message ID."""
+    """Fetch subject, sender, and attachment names for a single message ID."""
     svc = _get_service()
-    msg_data = svc.users().messages().get(
-        userId='me', id=msg_id, format='metadata',
-        metadataHeaders=['Subject', 'From']
-    ).execute()
+    msg_data = svc.users().messages().get(userId='me', id=msg_id, format='full').execute()
     headers = msg_data['payload']['headers']
+
+    attachments = []
+    def _scan_parts(parts):
+        for part in parts:
+            if part.get('filename') and part.get('body', {}).get('size', 0) > 0:
+                attachments.append({
+                    'name': part['filename'],
+                    'mimeType': part.get('mimeType', ''),
+                    'size': part['body']['size'],
+                })
+            if 'parts' in part:
+                _scan_parts(part['parts'])
+    _scan_parts(msg_data['payload'].get('parts', []))
+
     return {
         'subject': next((h['value'] for h in headers if h['name'] == 'Subject'), '(no subject)'),
         'sender': next((h['value'] for h in headers if h['name'] == 'From'), '(unknown)'),
+        'attachments': attachments,
     }
 
 
@@ -88,13 +100,19 @@ def _fetch_email_headers(max_results: int = 10) -> list:
 
 
 # Define a tool to read the latest 10 emails from Gmail
-VALID_CATEGORIES = ('primary', 'promotions', 'social', 'updates', 'forums')
+_CATEGORY_LABEL = {
+    'primary':    'CATEGORY_PERSONAL',
+    'promotions': 'CATEGORY_PROMOTIONS',
+    'social':     'CATEGORY_SOCIAL',
+    'updates':    'CATEGORY_UPDATES',
+    'forums':     'CATEGORY_FORUMS',
+}
 
 @tool
 def read_email(category: str = ''):
     """Read the latest 10 emails from Gmail. Optionally filter by inbox category: primary, promotions, social, updates, or forums. Returns subject and sender only. Use open_email to read a full message body."""
-    query = f'in:category:{category}' if category in VALID_CATEGORIES else ''
-    results = _get_service().users().messages().list(userId='me', maxResults=10, q=query).execute()
+    label_ids = ['INBOX', _CATEGORY_LABEL[category]] if category in _CATEGORY_LABEL else ['INBOX']
+    results = _get_service().users().messages().list(userId='me', maxResults=10, labelIds=label_ids).execute()
     msg_ids = [m['id'] for m in results.get('messages', [])]
     if not msg_ids:
         return []
@@ -230,3 +248,18 @@ def open_email(sender_email: str):
     if len(body) > 3000:
         body = body[:3000] + "\n... [truncated]"
     return f"Subject: {subject}\nFrom: {sender}\nBody:\n{body}"
+
+
+@tool
+def save_template(name: str, subject: str, body: str):
+    """Save an email as a reusable template so the user can send it again later."""
+    import sqlite3 as _sqlite3, uuid as _uuid
+    from pathlib import Path as _Path
+    db_path = _Path(__file__).parent.parent / 'chats.db'
+    tid = _uuid.uuid4().hex
+    with _sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO templates (id, name, subject, body) VALUES (?, ?, ?, ?)",
+            (tid, name, subject, body)
+        )
+    return f"Template '{name}' saved. Ask me to use the '{name}' template any time."

@@ -1,0 +1,346 @@
+/* ── Container ───────────────────────────────────────── */
+.email-cards-wrap { width: 100%; margin-top: 10px; }
+
+.email-cards {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 3px;
+}
+
+/* 2-column grid on desktop */
+@media (min-width: 620px) {
+  .email-cards { grid-template-columns: 1fr 1fr; }
+  .email-card--wide { grid-column: 1 / -1; }
+  .email-card-row { min-height: 50px; }
+}
+
+/* ── Card ────────────────────────────────────────────── */
+.email-card {
+  display: flex;
+  flex-direction: column;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-left: 3px solid var(--cat, rgba(255,255,255,0.12));
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.18s ease, background 0.15s, box-shadow 0.18s;
+}
+
+.email-card:hover {
+  transform: translateY(-2px);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+}
+
+.email-card--selected {
+  background: rgba(140, 80, 240, 0.07);
+  border-color: rgba(140, 80, 240, 0.28);
+}
+
+.email-card--expanded { background: rgba(255, 255, 255, 0.06); }
+
+/* ── Main row ────────────────────────────────────────── */
+.email-card-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 11px;
+}
+
+/* ── Checkbox ────────────────────────────────────────── */
+.email-card-check {
+  flex-shrink: 0;
+  position: relative;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.email-card-check input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.ec-checkmark {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1.5px solid rgba(255, 255, 255, 0.18);
+  background: transparent;
+  transition: background 0.15s, border-color 0.15s;
+  position: relative;
+}
+
+.email-card-check input:checked ~ .ec-checkmark {
+  background: rgba(140, 80, 240, 0.75);
+  border-color: rgba(160, 100, 255, 0.9);
+}
+
+.ec-checkmark::after {
+  content: '';
+  display: none;
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 5px;
+  height: 8px;
+  border: 2px solid #fff;
+  border-top: none;
+  border-left: none;
+  transform: rotate(40deg);
+}
+
+.email-card-check input:checked ~ .ec-checkmark::after { display: block; }
+
+/* ── Index number ────────────────────────────────────── */
+.email-card-idx {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.18);
+  width: 14px;
+  text-align: center;
+}
+
+/* ── Avatar ──────────────────────────────────────────── */
+.email-card-avatar { flex-shrink: 0; }
+
+.email-card-logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  object-fit: contain;
+  background: rgba(255, 255, 255, 0.07);
+  display: block;
+}
+
+.email-card-initial {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+}
+
+/* ── Text ────────────────────────────────────────────── */
+.email-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.email-card-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.38);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.email-card-subject {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.82);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.email-card-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+.email-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 4px;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
+/* ── Badge ───────────────────────────────────────────── */
+.email-card-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
+.email-card-badge--urgent {
+  color: rgba(239, 68, 68, 0.9);
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.email-card-badge--promotions {
+  color: rgba(245, 158, 11, 0.9);
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+}
+
+/* ── Action buttons ──────────────────────────────────── */
+.email-card-actions { display: flex; gap: 3px; flex-shrink: 0; }
+
+.email-action-btn {
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.email-action-btn:hover { background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.9); }
+
+.email-action-unsub { color: rgba(220,80,80,0.6); border-color: rgba(220,80,80,0.16); }
+.email-action-unsub:hover { background: rgba(220,80,80,0.1); color: rgba(240,100,100,0.9); }
+
+/* ── Expanded detail row ─────────────────────────────── */
+.email-card-detail {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 11px 9px 57px;
+  gap: 10px;
+}
+
+.email-card-addr {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.email-read-btn {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: rgba(140, 80, 240, 0.75);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.15s;
+}
+.email-read-btn:hover { color: rgba(180, 130, 255, 1); }
+
+/* ── Inline reply ────────────────────────────────────── */
+.email-reply-box {
+  padding: 8px 11px 11px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.email-reply-input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  padding: 9px 11px;
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 13px;
+  font-family: inherit;
+  resize: none;
+  outline: none;
+  line-height: 1.5;
+  transition: border-color 0.15s;
+}
+.email-reply-input::placeholder { color: rgba(255,255,255,0.18); }
+.email-reply-input:focus { border-color: rgba(140,80,240,0.38); }
+
+.email-reply-footer { display: flex; justify-content: flex-end; gap: 6px; }
+
+.email-reply-cancel {
+  padding: 5px 13px;
+  border-radius: 7px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.4);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.email-reply-cancel:hover { background: rgba(255,255,255,0.09); }
+
+.email-reply-send {
+  padding: 5px 13px;
+  border-radius: 7px;
+  background: rgba(140,80,240,0.18);
+  border: 1px solid rgba(140,80,240,0.32);
+  color: rgba(190,150,255,0.95);
+  font-size: 12px;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.email-reply-send:hover:not(:disabled) { background: rgba(140,80,240,0.32); color: #fff; }
+.email-reply-send:disabled { opacity: 0.35; cursor: default; }
+
+/* ── Bulk action bar ─────────────────────────────────── */
+.email-bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 7px;
+  padding: 9px 13px;
+  background: rgba(140, 80, 240, 0.08);
+  border: 1px solid rgba(140, 80, 240, 0.18);
+  border-radius: 10px;
+}
+
+.email-bulk-count { font-size: 13px; color: rgba(255,255,255,0.55); flex: 1; }
+
+.email-bulk-unsub {
+  padding: 5px 13px;
+  border-radius: 7px;
+  background: rgba(239,68,68,0.12);
+  border: 1px solid rgba(239,68,68,0.25);
+  color: rgba(240,100,100,0.9);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.email-bulk-unsub:hover { background: rgba(239,68,68,0.22); }
+
+.email-bulk-clear {
+  padding: 5px 13px;
+  border-radius: 7px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.38);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.email-bulk-clear:hover { background: rgba(255,255,255,0.09); color: rgba(255,255,255,0.7); }
