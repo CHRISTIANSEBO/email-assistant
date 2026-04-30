@@ -7,6 +7,7 @@ import EmailCards from './EmailCards';
 import type { EmailData } from './EmailCards';
 import ComposePanel from './ComposePanel';
 import UnsubView from './UnsubView';
+import InboxLoader from './InboxLoader';
 import LoginPage from './LoginPage';
 import type { UnsubSender } from './UnsubView';
 import type { UserProfile } from './Sidebar';
@@ -586,9 +587,7 @@ export default function App() {
                     )}
                   </div>
                   {inboxView.loading ? (
-                    <div className="inbox-view-loading">
-                      <span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" />
-                    </div>
+                    <InboxLoader />
                   ) : inboxView.emails.length > 0 ? (
                     <EmailCards emails={inboxView.emails} onAction={sendMessage} />
                   ) : (

@@ -5,6 +5,7 @@ import secrets
 import sqlite3
 import threading
 import uuid
+from functools import wraps
 from pathlib import Path
 from flask import Flask, request, jsonify, Response, stream_with_context, redirect, session
 from langchain_core.messages import AIMessageChunk, ToolMessage
@@ -17,11 +18,24 @@ from agent.file_handler import (
 import builtins as _builtins
 import anthropic as _anthropic
 
-# Required for OAuth over plain HTTP on localhost
-os.environ.setdefault('OAUTHLIB_INSECURE_TRANSPORT', '1')
+# Only allow OAuth over HTTP on localhost — never in production
+if os.getenv('FLASK_ENV') != 'production':
+    os.environ.setdefault('OAUTHLIB_INSECURE_TRANSPORT', '1')
 
 app = Flask(__name__)
+if os.getenv('FLASK_ENV') == 'production' and not os.getenv('FLASK_SECRET_KEY'):
+    raise RuntimeError('FLASK_SECRET_KEY env var must be set in production.')
 app.secret_key = os.getenv('FLASK_SECRET_KEY', 'jean-dev-secret-key')
+
+
+def require_auth(f):
+    """Decorator that returns 401 if no valid OAuth token exists."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not is_authenticated():
+            return jsonify({'error': 'Unauthorized'}), 401
+        return f(*args, **kwargs)
+    return decorated
 
 _CALLBACK_URL  = 'http://localhost:5000/auth/callback'
 _FRONTEND_URL  = os.getenv('FRONTEND_URL', 'http://localhost:5173')
@@ -365,6 +379,7 @@ def auth_profile():
 # ── DB routes ─────────────────────────────────────────────────────────────────
 
 @app.route('/chats', methods=['GET'])
+@require_auth
 def list_chats():
     with _db() as conn:
         rows = conn.execute(
@@ -374,6 +389,7 @@ def list_chats():
 
 
 @app.route('/chats/<chat_id>', methods=['GET'])
+@require_auth
 def get_chat(chat_id: str):
     with _db() as conn:
         row = conn.execute("SELECT * FROM chats WHERE id = ?", (chat_id,)).fetchone()
@@ -385,6 +401,7 @@ def get_chat(chat_id: str):
 
 
 @app.route('/chats/<chat_id>/save', methods=['POST'])
+@require_auth
 def save_chat(chat_id: str):
     body = request.json or {}
     messages = body.get('messages', [])
@@ -399,6 +416,7 @@ def save_chat(chat_id: str):
 
 
 @app.route('/chats/<chat_id>', methods=['DELETE'])
+@require_auth
 def delete_chat(chat_id: str):
     with _db() as conn:
         conn.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
@@ -406,6 +424,7 @@ def delete_chat(chat_id: str):
 
 
 @app.route('/chats/search', methods=['GET'])
+@require_auth
 def search_chats():
     q = request.args.get('q', '').strip()
     if len(q) < 2:
@@ -422,6 +441,7 @@ def search_chats():
 # ── Templates ─────────────────────────────────────────────────────────────────
 
 @app.route('/templates', methods=['GET'])
+@require_auth
 def list_templates():
     with _db() as conn:
         rows = conn.execute(
@@ -431,6 +451,7 @@ def list_templates():
 
 
 @app.route('/templates', methods=['POST'])
+@require_auth
 def create_template():
     body = request.json or {}
     tid = uuid.uuid4().hex
@@ -443,6 +464,7 @@ def create_template():
 
 
 @app.route('/templates/<template_id>', methods=['DELETE'])
+@require_auth
 def delete_template(template_id: str):
     with _db() as conn:
         conn.execute("DELETE FROM templates WHERE id = ?", (template_id,))
@@ -460,6 +482,7 @@ _CATEGORY_LABEL = {
 }
 
 @app.route('/inbox', methods=['GET'])
+@require_auth
 def get_inbox():
     from agent.tools import _get_service, _fetch_one_headers, URGENT_KEYWORDS
     from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
@@ -499,6 +522,7 @@ def get_inbox():
 # ── Non-streaming chat (used by main.py terminal REPL) ───────────────────────
 
 @app.route('/chat', methods=['POST'])
+@require_auth
 def chat():
     global _thread_id
     body = request.json or {}
@@ -549,6 +573,7 @@ def chat():
 # ── Streaming chat endpoint ───────────────────────────────────────────────────
 
 @app.route('/stream', methods=['POST'])
+@require_auth
 def stream_chat():
     global _thread_id
     body = request.json or {}
@@ -642,6 +667,7 @@ def stream_chat():
 # ── Confirmation endpoint (works for both streaming and non-streaming) ────────
 
 @app.route('/confirm', methods=['POST'])
+@require_auth
 def confirm():
     answer = 'y' if (request.json or {}).get('confirmed') else 'n'
     with _lock:

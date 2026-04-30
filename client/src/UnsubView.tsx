@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { gsap } from 'gsap';
+import InboxLoader from './InboxLoader';
 import './UnsubView.css';
 
 export interface UnsubSender {
@@ -32,11 +33,7 @@ export default function UnsubView({ senders, loading, onUnsub }: UnsubViewProps)
   }, [loading, senders.length]);
 
   if (loading) {
-    return (
-      <div className="unsub-loading">
-        <span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" />
-      </div>
-    );
+    return <InboxLoader />;
   }
 
   if (senders.length === 0) {
