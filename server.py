@@ -8,7 +8,7 @@ import time
 import uuid
 from functools import wraps
 from pathlib import Path
-from flask import Flask, request, jsonify, Response, stream_with_context, redirect, session
+from flask import Flask, request, jsonify, Response, stream_with_context, redirect, session, send_from_directory
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from langchain_core.messages import AIMessageChunk, ToolMessage
@@ -728,6 +728,22 @@ def confirm():
         # SSE stream delivers subsequent tokens; just acknowledge
         return jsonify({'ok': True})
     return jsonify(_wait_for_agent(st))
+
+
+# ── Frontend static file serving (production) ────────────────────────────────
+
+_DIST = Path(__file__).parent / 'client' / 'dist'
+
+if _DIST.exists():
+    @app.route('/assets/<path:filename>')
+    def frontend_assets(filename):
+        return send_from_directory(_DIST / 'assets', filename)
+
+    @app.route('/', defaults={'path': ''})
+    @app.route('/<path:path>')
+    def frontend_index(path):
+        # Let API routes fall through — only serve index.html for unknown paths
+        return send_from_directory(_DIST, 'index.html')
 
 
 if __name__ == '__main__':
