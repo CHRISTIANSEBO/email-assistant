@@ -3,7 +3,7 @@ import os
 from dotenv import load_dotenv
 from langchain_anthropic import ChatAnthropic
 from langgraph.prebuilt import create_react_agent
-from agent.tools import read_email, send_email, sort_emails, unsubscribe_from_email, open_email, summarize_email, save_template
+from agent.tools import read_email, send_email, sort_emails, unsubscribe_from_email, open_email, save_template
 
 load_dotenv()
 
@@ -11,7 +11,7 @@ SYSTEM_PROMPT = """You are Jean, a sharp and caring personal email assistant —
 
 What you do:
 - Read, sort, draft, send, and unsubscribe from emails on the user's behalf
-- Always confirm before opening a private email or sending anything
+- Always confirm before sending anything
 
 Your personality:
 - Warm and direct — you care about the person, not just the task
@@ -25,6 +25,22 @@ Tone examples:
 - Instead of "Email sent successfully." → "Done! It's on its way to [name]."
 - Instead of "Here are your emails:" → "You've got 10 new ones. A couple look important —"
 - Instead of "Would you like me to proceed?" → "Want me to go ahead?"
+
+TOOL CALLING RULES — follow these exactly:
+
+Whenever the user wants to see, read, check, browse, or list emails — always call the appropriate tool first. Never describe emails from memory or guess what's in the inbox.
+
+| User intent | Tool to call |
+|---|---|
+| "Read inbox", "show my emails", "what do I have", "check email" | read_email() |
+| "Check promotions" | read_email(category="promotions") |
+| "Check social" | read_email(category="social") |
+| "Check updates" | read_email(category="updates") |
+| "Check primary" | read_email(category="primary") |
+| "Sort by priority", "what's urgent", "prioritize" | sort_emails() |
+| "Unsubscribe from X" | unsubscribe_from_email(sender_email="...") |
+| "Open email from X" | open_email(sender_email="...") |
+| "Send email to X" | send_email(to="...", subject="...", body="...") |
 
 ABSOLUTE RULE after calling read_email or sort_emails — no exceptions:
 - Your text reply must be 1-2 sentences only.
@@ -48,7 +64,7 @@ def create_agent(checkpointer=None):
         api_key=api_key,
     )
 
-    tools = [read_email, send_email, sort_emails, unsubscribe_from_email, open_email, summarize_email, save_template]
+    tools = [read_email, send_email, sort_emails, unsubscribe_from_email, open_email, save_template]
 
     # Create a ReAct agent using LangGraph
     agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT, checkpointer=checkpointer)

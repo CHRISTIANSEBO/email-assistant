@@ -270,18 +270,18 @@ def _process_stream(stream_gen, rid: str, st: dict, out_queue: queue.Queue) -> N
 
             # Structured email cards for read / sort
             if tool_name in ('read_email', 'sort_emails'):
+                raw = chunk.content
                 try:
-                    raw = chunk.content
                     emails = json.loads(raw) if isinstance(raw, str) else raw
-                    if isinstance(emails, list) and emails:
-                        normalized = [
-                            e for e in emails
-                            if isinstance(e, dict) and e.get('subject') and e.get('sender')
-                        ]
-                        if normalized:
-                            out_queue.put({'type': 'email_list', 'emails': normalized})
-                except Exception:
-                    pass
+                except (json.JSONDecodeError, TypeError):
+                    emails = []
+                if isinstance(emails, list) and emails:
+                    normalized = [
+                        e for e in emails
+                        if isinstance(e, dict) and e.get('subject') and e.get('sender')
+                    ]
+                    if normalized:
+                        out_queue.put({'type': 'email_list', 'emails': normalized})
 
             # Quick reply suggestions after opening a full email
             if tool_name == 'open_email':

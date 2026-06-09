@@ -3,8 +3,11 @@ from langchain.tools import tool
 from email.mime.text import MIMEText
 import base64
 import re
+import sqlite3
 import threading
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from googleapiclient.discovery import build as _build_service
 from agent.file_handler import _load_credentials
 
@@ -49,18 +52,6 @@ def _extract_body(payload: dict) -> str:
 
 
 
-def _fetch_one(msg_id: str) -> dict:
-    """Fetch full email (with body) for a single message ID."""
-    svc = _get_service()
-    msg_data = svc.users().messages().get(userId='me', id=msg_id, format='full').execute()
-    headers = msg_data['payload']['headers']
-    return {
-        'subject': next((h['value'] for h in headers if h['name'] == 'Subject'), '(no subject)'),
-        'sender': next((h['value'] for h in headers if h['name'] == 'From'), '(unknown)'),
-        'body': _extract_body(msg_data['payload']),
-    }
-
-
 def _fetch_one_headers(msg_id: str) -> dict:
     """Fetch subject, sender, and attachment names for a single message ID."""
     svc = _get_service()
@@ -85,17 +76,6 @@ def _fetch_one_headers(msg_id: str) -> dict:
         'sender': next((h['value'] for h in headers if h['name'] == 'From'), '(unknown)'),
         'attachments': attachments,
     }
-
-
-def _fetch_emails(max_results: int = 10) -> list:
-    """Fetch the latest emails (with bodies) from Gmail in parallel."""
-    results = _get_service().users().messages().list(userId='me', maxResults=max_results).execute()
-    msg_ids = [m['id'] for m in results.get('messages', [])]
-    if not msg_ids:
-        return []
-    with ThreadPoolExecutor(max_workers=min(len(msg_ids), 10)) as executor:
-        futures = {executor.submit(_fetch_one, mid): mid for mid in msg_ids}
-        return [f.result() for f in as_completed(futures)]
 
 
 def _fetch_email_headers(max_results: int = 10) -> list:
@@ -150,12 +130,6 @@ def send_email(to, subject, body):
     _get_service().users().messages().send(userId='me', body={'raw': raw_message}).execute()
 
     return "Email sent successfully."
-
-# Define a tool to summarize the content of an email
-@tool
-def summarize_email(msg: dict):
-    """Summarize the content of an email."""
-    return f"Subject: {msg['subject']}\nFrom: {msg['sender']}\nBody: {msg['body']}"
 
 # Define a tool to sort emails by priority
 URGENT_KEYWORDS = ['urgent', 'asap', 'important', 'action required', 'deadline', 'critical', 'immediately']
@@ -262,11 +236,9 @@ def open_email(sender_email: str, subject_hint: str = ''):
 @tool
 def save_template(name: str, subject: str, body: str):
     """Save an email as a reusable template so the user can send it again later."""
-    import sqlite3 as _sqlite3, uuid as _uuid
-    from pathlib import Path as _Path
-    db_path = _Path(__file__).parent.parent / 'chats.db'
-    tid = _uuid.uuid4().hex
-    with _sqlite3.connect(db_path) as conn:
+    db_path = Path(__file__).parent.parent / 'chats.db'
+    tid = uuid.uuid4().hex
+    with sqlite3.connect(db_path) as conn:
         conn.execute(
             "INSERT INTO templates (id, name, subject, body) VALUES (?, ?, ?, ?)",
             (tid, name, subject, body)
