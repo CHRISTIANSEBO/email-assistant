@@ -11,6 +11,7 @@ export interface UserProfile {
 interface SidebarProps {
   collapsed: boolean;
   onToggle: () => void;
+  mobileOpen?: boolean;
   onFetchInbox: (category: string) => void;
   onCompose: () => void;
   templates: TemplateItem[];
@@ -37,7 +38,7 @@ const NAV = [
 ];
 
 export default function Sidebar({
-  collapsed, onToggle: _onToggle, onFetchInbox, onCompose, templates, onUseTemplate, onDeleteTemplate,
+  collapsed, onToggle: _onToggle, mobileOpen = false, onFetchInbox, onCompose, templates, onUseTemplate, onDeleteTemplate,
   recentChats, onLoadChat, onDeleteChat, searchQuery, onSearchChange, onNewChat,
   profile, onSignOut,
 }: SidebarProps) {
@@ -45,7 +46,7 @@ export default function Sidebar({
   const [recentsOpen, setRecentsOpen] = useState(true);
 
   return (
-    <aside className={`sidebar${collapsed ? ' collapsed' : ''}`}>
+    <aside className={`sidebar${collapsed ? ' collapsed' : ''}${mobileOpen ? ' mobile-open' : ''}`}>
 
       {/* New chat */}
       <button type="button" className="sidebar-new-btn" onClick={onNewChat} title="New chat">

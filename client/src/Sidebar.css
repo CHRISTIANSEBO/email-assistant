@@ -255,3 +255,21 @@
   color: rgba(255, 100, 100, 0.8);
   background: rgba(240, 80, 80, 0.08);
 }
+
+/* ── Mobile: sidebar as fixed overlay drawer ── */
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    width: 224px !important;
+    transform: translateX(-100%);
+    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 300;
+  }
+
+  .sidebar.mobile-open {
+    transform: translateX(0);
+  }
+}

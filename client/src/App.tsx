@@ -131,8 +131,9 @@ export default function App() {
   const [undoCountdown, setUndoCountdown]     = useState(5);
   const [searchQuery, setSearchQuery]         = useState('');
   const [templates, setTemplates]             = useState<TemplateItem[]>([]);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [inboxView, setInboxView]               = useState<InboxView | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed]   = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [inboxView, setInboxView]                 = useState<InboxView | null>(null);
   const [unsubView, setUnsubView]               = useState<UnsubViewState | null>(null);
   const [isAuthenticated, setIsAuthenticated]   = useState<boolean | null>(null);
   const [profile, setProfile]                   = useState<UserProfile | null>(null);
@@ -498,22 +499,27 @@ export default function App() {
     <div className="app-layout">
       <ComposePanel open={composeOpen} onClose={() => setComposeOpen(false)} onSend={handleComposeSend} />
 
+      {mobileSidebarOpen && (
+        <div className="sidebar-overlay" onClick={() => setMobileSidebarOpen(false)} aria-hidden="true" />
+      )}
+
       <Sidebar
         collapsed={sidebarCollapsed}
         onToggle={() => setSidebarCollapsed(c => !c)}
-        onFetchInbox={fetchInbox}
-        onCompose={() => setComposeOpen(true)}
+        mobileOpen={mobileSidebarOpen}
+        onFetchInbox={(cat) => { fetchInbox(cat); setMobileSidebarOpen(false); }}
+        onCompose={() => { setComposeOpen(true); setMobileSidebarOpen(false); }}
         profile={profile}
         onSignOut={signOut}
         templates={templates}
-        onUseTemplate={useTemplate}
+        onUseTemplate={(t) => { useTemplate(t); setMobileSidebarOpen(false); }}
         onDeleteTemplate={deleteTemplate}
         recentChats={recentChats}
-        onLoadChat={loadChat}
+        onLoadChat={(id) => { loadChat(id); setMobileSidebarOpen(false); }}
         onDeleteChat={deleteChat}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
-        onNewChat={newChat}
+        onNewChat={() => { newChat(); setMobileSidebarOpen(false); }}
       />
 
       <main className="main">
@@ -522,6 +528,17 @@ export default function App() {
         </div>
 
         <div className="chat-area">
+          <button
+            type="button"
+            className="mobile-menu-btn"
+            onClick={() => setMobileSidebarOpen(o => !o)}
+            aria-label="Open menu"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+            </svg>
+          </button>
+
           {isEmpty ? (
             <div className="greeting">
               <SplitText
