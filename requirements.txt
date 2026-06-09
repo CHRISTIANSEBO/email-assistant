@@ -9,3 +9,4 @@ python-dotenv
 pytest
 flask
 flask-limiter
+gunicorn
