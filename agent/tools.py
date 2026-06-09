@@ -54,7 +54,10 @@ def _fetch_one(msg_id: str) -> dict:
 def _fetch_one_headers(msg_id: str) -> dict:
     """Fetch subject, sender, and attachment names for a single message ID."""
     svc = _get_service()
-    msg_data = svc.users().messages().get(userId='me', id=msg_id, format='full').execute()
+    msg_data = svc.users().messages().get(
+        userId='me', id=msg_id, format='metadata',
+        metadataHeaders=['Subject', 'From']
+    ).execute()
     headers = msg_data['payload']['headers']
 
     attachments = []
@@ -224,12 +227,15 @@ def unsubscribe_from_email(sender_email: str):
 
 # Define a tool to open and read the full body of a specific email
 @tool
-def open_email(sender_email: str):
-    """Open and read the full body of the most recent email from a given sender email address."""
+def open_email(sender_email: str, subject_hint: str = ''):
+    """Open and read the full body of the most recent email from a given sender email address. Optionally pass subject_hint to narrow to a specific email by subject keywords."""
     if not _EMAIL_RE.match(sender_email):
         return f"Invalid sender email address: {sender_email}"
 
-    results = _get_service().users().messages().list(userId='me', q=f'from:{sender_email}', maxResults=1).execute()
+    query = f'from:{sender_email}'
+    if subject_hint:
+        query += f' subject:{subject_hint}'
+    results = _get_service().users().messages().list(userId='me', q=query, maxResults=1).execute()
     messages = results.get('messages', [])
 
     if not messages:

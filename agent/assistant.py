@@ -41,7 +41,7 @@ Always refer to yourself as Jean."""
 def create_agent(checkpointer=None):
     """Create and return a LangGraph ReAct agent."""
     llm = ChatAnthropic(
-        model="claude-haiku-4-5",
+        model="claude-haiku-4-5-20251001",
         api_key=os.getenv("ANTHROPIC_API_KEY")
     )
 

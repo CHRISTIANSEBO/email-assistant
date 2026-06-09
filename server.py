@@ -4,10 +4,13 @@ import queue
 import secrets
 import sqlite3
 import threading
+import time
 import uuid
 from functools import wraps
 from pathlib import Path
 from flask import Flask, request, jsonify, Response, stream_with_context, redirect, session
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from langchain_core.messages import AIMessageChunk, ToolMessage
 from langgraph.checkpoint.memory import MemorySaver
 from agent.assistant import create_agent
@@ -27,6 +30,13 @@ if os.getenv('FLASK_ENV') == 'production' and not os.getenv('FLASK_SECRET_KEY'):
     raise RuntimeError('FLASK_SECRET_KEY env var must be set in production.')
 app.secret_key = os.getenv('FLASK_SECRET_KEY', 'jean-dev-secret-key')
 
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=[],
+    storage_uri="memory://",
+)
+
 
 def require_auth(f):
     """Decorator that returns 401 if no valid OAuth token exists."""
@@ -37,9 +47,14 @@ def require_auth(f):
         return f(*args, **kwargs)
     return decorated
 
-_CALLBACK_URL  = 'http://localhost:5000/auth/callback'
+# Issue #9: make callback URL configurable for non-local deployments
+_CALLBACK_URL  = os.getenv('OAUTH_CALLBACK_URL', 'http://localhost:5000/auth/callback')
 _FRONTEND_URL  = os.getenv('FRONTEND_URL', 'http://localhost:5173')
-_oauth_states: dict[str, str | None] = {}  # state -> code_verifier
+
+# Issue #7: store (code_verifier, expiry_timestamp) so stale states can be pruned
+_oauth_states: dict[str, tuple[str | None, float]] = {}
+_OAUTH_STATE_TTL = 600  # 10 minutes
+
 checkpointer = MemorySaver()
 agent = create_agent(checkpointer=checkpointer)
 
@@ -76,66 +91,81 @@ def _init_db():
 
 _init_db()
 
-_lock = threading.Lock()
-_thread_id = "web"
-_state = {
-    'active_rid': None,
-    'pending_prompt': None,
-    'input_event': None,
-    'input_response': None,
-    'ready': threading.Event(),
-    'result': None,
-    'error': None,
-    'stream_queue': None,
-}
+# Issue #6: per-session state instead of a single global.
+# Each session (browser tab / cookie) gets its own lock, thread_id, and state
+# so concurrent users/requests don't clobber each other.
+_sessions: dict[str, dict] = {}
+_sessions_meta_lock = threading.Lock()
+
+
+def _get_session_state() -> dict:
+    """Return (or create) the state bucket for the current Flask session."""
+    sid = session.get('sid')
+    if not sid:
+        sid = uuid.uuid4().hex
+        session['sid'] = sid
+    with _sessions_meta_lock:
+        if sid not in _sessions:
+            _sessions[sid] = {
+                'lock': threading.Lock(),
+                'thread_id': f"web-{sid[:8]}",
+                'active_rid': None,
+                'pending_prompt': None,
+                'input_event': None,
+                'input_response': None,
+                'ready': threading.Event(),
+                'result': None,
+                'error': None,
+                'stream_queue': None,
+            }
+        return _sessions[sid]
 
 
 # ── Non-streaming input override (used by /chat) ──────────────────────────────
 
-def _make_web_input(rid: str):
+def _make_web_input(rid: str, st: dict):
     def _web_input(prompt: str) -> str:
-        with _lock:
-            if _state['active_rid'] != rid:
+        with st['lock']:
+            if st['active_rid'] != rid:
                 return 'n'
         input_event = threading.Event()
-        with _lock:
-            _state['pending_prompt'] = prompt
-            _state['input_event'] = input_event
-            _state['input_response'] = None
-        _state['ready'].set()
+        with st['lock']:
+            st['pending_prompt'] = prompt
+            st['input_event'] = input_event
+            st['input_response'] = None
+        st['ready'].set()
         input_event.wait()
-        return _state['input_response'] or 'n'
+        return st['input_response'] or 'n'
     return _web_input
 
 
 # ── Streaming input override (used by /stream) ────────────────────────────────
 
-def _make_web_input_streaming(rid: str, out_queue: queue.Queue):
+def _make_web_input_streaming(rid: str, st: dict, out_queue: queue.Queue):
     def _web_input(prompt: str) -> str:
-        with _lock:
-            if _state['active_rid'] != rid:
+        with st['lock']:
+            if st['active_rid'] != rid:
                 return 'n'
         input_event = threading.Event()
-        with _lock:
-            _state['pending_prompt'] = prompt
-            _state['input_event'] = input_event
-            _state['input_response'] = None
+        with st['lock']:
+            st['pending_prompt'] = prompt
+            st['input_event'] = input_event
+            st['input_response'] = None
         out_queue.put({'type': 'confirmation', 'prompt': prompt})
         input_event.wait()
         out_queue.put({'type': 'confirmation_resolved'})
-        return _state['input_response'] or 'n'
+        return st['input_response'] or 'n'
     return _web_input
 
 
 # ── Non-streaming agent runner (used by /chat) ────────────────────────────────
 
-def _run_agent(user_input: str, rid: str) -> None:
-    global _thread_id
+def _run_agent(user_input: str, rid: str, st: dict) -> None:
     original_input = _builtins.input
-    _builtins.input = _make_web_input(rid)
+    _builtins.input = _make_web_input(rid, st)
     try:
-        with _lock:
-            tid = _thread_id
+        with st['lock']:
+            tid = st['thread_id']
         try:
             response = agent.invoke(
                 {'messages': [{'role': 'user', 'content': user_input}]},
@@ -144,31 +174,32 @@ def _run_agent(user_input: str, rid: str) -> None:
         except ValueError as e:
             if 'INVALID_CHAT_HISTORY' not in str(e):
                 raise
-            with _lock:
-                _thread_id = f"web-{uuid.uuid4().hex[:8]}"
-                tid = _thread_id
+            new_tid = f"web-{uuid.uuid4().hex[:8]}"
+            with st['lock']:
+                st['thread_id'] = new_tid
+                tid = new_tid
             response = agent.invoke(
                 {'messages': [{'role': 'user', 'content': user_input}]},
                 config={"configurable": {"thread_id": tid}}
             )
-        with _lock:
-            if _state['active_rid'] == rid:
-                _state['result'] = response['messages'][-1].content
-                _state['error'] = None
+        with st['lock']:
+            if st['active_rid'] == rid:
+                st['result'] = response['messages'][-1].content
+                st['error'] = None
     except Exception as e:
         msg = str(e)
         err = ("I'm being rate-limited right now. Wait a moment and try again."
                if '429' in msg or 'rate_limit' in msg.lower()
                else f"Something went wrong: {type(e).__name__}: {e}")
-        with _lock:
-            if _state['active_rid'] == rid:
-                _state['error'] = err
-                _state['result'] = None
+        with st['lock']:
+            if st['active_rid'] == rid:
+                st['error'] = err
+                st['result'] = None
     finally:
         _builtins.input = original_input
-        with _lock:
-            if _state['active_rid'] == rid:
-                _state['ready'].set()
+        with st['lock']:
+            if st['active_rid'] == rid:
+                st['ready'].set()
 
 
 # ── Streaming helpers ─────────────────────────────────────────────────────────
@@ -197,12 +228,12 @@ def _generate_quick_replies(email_content: str) -> list:
         return []
 
 
-def _process_stream(stream_gen, rid: str, out_queue: queue.Queue) -> None:
+def _process_stream(stream_gen, rid: str, st: dict, out_queue: queue.Queue) -> None:
     """Iterate a LangGraph message stream and push SSE-ready dicts to out_queue."""
     last_tool_name = None
     for chunk, _metadata in stream_gen:
-        with _lock:
-            if _state['active_rid'] != rid:
+        with st['lock']:
+            if st['active_rid'] != rid:
                 return
 
         if isinstance(chunk, AIMessageChunk):
@@ -259,13 +290,12 @@ def _process_stream(stream_gen, rid: str, out_queue: queue.Queue) -> None:
                         out_queue.put({'type': 'quick_replies', 'replies': replies})
 
 
-def _run_agent_streaming(user_input: str, rid: str, out_queue: queue.Queue) -> None:
-    global _thread_id
+def _run_agent_streaming(user_input: str, rid: str, st: dict, out_queue: queue.Queue) -> None:
     original_input = _builtins.input
-    _builtins.input = _make_web_input_streaming(rid, out_queue)
+    _builtins.input = _make_web_input_streaming(rid, st, out_queue)
     try:
-        with _lock:
-            tid = _thread_id
+        with st['lock']:
+            tid = st['thread_id']
 
         def _do_stream(thread_id: str):
             return agent.stream(
@@ -275,51 +305,52 @@ def _run_agent_streaming(user_input: str, rid: str, out_queue: queue.Queue) -> N
             )
 
         try:
-            _process_stream(_do_stream(tid), rid, out_queue)
+            _process_stream(_do_stream(tid), rid, st, out_queue)
         except ValueError as e:
             if 'INVALID_CHAT_HISTORY' not in str(e):
                 raise
-            with _lock:
-                _thread_id = f"web-{uuid.uuid4().hex[:8]}"
-                tid = _thread_id
-            _process_stream(_do_stream(tid), rid, out_queue)
+            new_tid = f"web-{uuid.uuid4().hex[:8]}"
+            with st['lock']:
+                st['thread_id'] = new_tid
+                tid = new_tid
+            _process_stream(_do_stream(tid), rid, st, out_queue)
 
-        with _lock:
-            if _state['active_rid'] == rid:
-                out_queue.put({'type': 'done', 'thread_id': _thread_id})
+        with st['lock']:
+            if st['active_rid'] == rid:
+                out_queue.put({'type': 'done', 'thread_id': st['thread_id']})
     except Exception as e:
         msg = str(e)
         err = ("I'm being rate-limited right now. Wait a moment and try again."
                if '429' in msg or 'rate_limit' in msg.lower()
                else f"Something went wrong: {type(e).__name__}: {e}")
-        with _lock:
-            if _state['active_rid'] == rid:
+        with st['lock']:
+            if st['active_rid'] == rid:
                 out_queue.put({'type': 'error', 'message': err})
     finally:
         _builtins.input = original_input
-        with _lock:
-            if _state['active_rid'] == rid:
-                _state['stream_queue'] = None
+        with st['lock']:
+            if st['active_rid'] == rid:
+                st['stream_queue'] = None
 
 
 # ── Shared wait helper (non-streaming only) ───────────────────────────────────
 
-def _wait_for_agent() -> dict:
+def _wait_for_agent(st: dict) -> dict:
     timeout = 120
     deadline = threading.Event()
     timer = threading.Timer(timeout, deadline.set)
     timer.start()
     try:
         while not deadline.is_set():
-            _state['ready'].wait(timeout=1)
-            _state['ready'].clear()
-            with _lock:
-                if _state['input_event'] and not _state['input_event'].is_set():
-                    return {'type': 'confirmation', 'prompt': _state['pending_prompt'], 'reply': ''}
-                if _state['error'] is not None:
-                    return {'type': 'message', 'reply': _state['error']}
-                if _state['result'] is not None:
-                    return {'type': 'message', 'reply': _state['result']}
+            st['ready'].wait(timeout=1)
+            st['ready'].clear()
+            with st['lock']:
+                if st['input_event'] and not st['input_event'].is_set():
+                    return {'type': 'confirmation', 'prompt': st['pending_prompt'], 'reply': ''}
+                if st['error'] is not None:
+                    return {'type': 'message', 'reply': st['error']}
+                if st['result'] is not None:
+                    return {'type': 'message', 'reply': st['result']}
     finally:
         timer.cancel()
     return {'type': 'message', 'reply': 'Request timed out. Please try again.'}
@@ -334,22 +365,32 @@ def auth_status():
 
 @app.route('/auth/login')
 def auth_login():
+    # Prune expired OAuth states before adding a new one (Issue #7)
+    now = time.time()
+    expired = [k for k, (_, exp) in list(_oauth_states.items()) if now > exp]
+    for k in expired:
+        _oauth_states.pop(k, None)
+
     state = secrets.token_urlsafe(16)
     flow = create_web_flow(_CALLBACK_URL)
     auth_url, _ = flow.authorization_url(
         prompt='consent', access_type='offline', state=state
     )
-    # Store code_verifier so the callback can pass it to fetch_token (PKCE)
-    _oauth_states[state] = getattr(flow, 'code_verifier', None)
+    _oauth_states[state] = (getattr(flow, 'code_verifier', None), now + _OAUTH_STATE_TTL)
     return jsonify({'url': auth_url})
 
 
 @app.route('/auth/callback')
 def auth_callback():
     state = request.args.get('state', '')
-    if state not in _oauth_states:
+    entry = _oauth_states.get(state)
+    if not entry:
         return 'Invalid or expired auth state.', 400
-    code_verifier = _oauth_states.pop(state)
+    code_verifier, expiry = entry
+    if time.time() > expiry:
+        _oauth_states.pop(state, None)
+        return 'Invalid or expired auth state.', 400
+    _oauth_states.pop(state, None)
     flow = create_web_flow(_CALLBACK_URL)
     try:
         extra = {'code_verifier': code_verifier} if code_verifier else {}
@@ -523,8 +564,9 @@ def get_inbox():
 
 @app.route('/chat', methods=['POST'])
 @require_auth
+@limiter.limit("30 per minute")
 def chat():
-    global _thread_id
+    st = _get_session_state()
     body = request.json or {}
     user_input = body.get('message', '').strip()
     chat_id = body.get('chat_id') or None
@@ -535,12 +577,12 @@ def chat():
         with _db() as conn:
             row = conn.execute("SELECT thread_id FROM chats WHERE id = ?", (chat_id,)).fetchone()
         if row and row['thread_id']:
-            with _lock:
-                _thread_id = row['thread_id']
+            with st['lock']:
+                st['thread_id'] = row['thread_id']
     else:
         chat_id = uuid.uuid4().hex
-        with _lock:
-            tid = _thread_id
+        with st['lock']:
+            tid = st['thread_id']
         with _db() as conn:
             conn.execute(
                 "INSERT OR IGNORE INTO chats (id, title, messages, thread_id) VALUES (?, ?, ?, ?)",
@@ -548,25 +590,25 @@ def chat():
             )
 
     rid = uuid.uuid4().hex
-    with _lock:
-        old_event = _state['input_event']
+    with st['lock']:
+        old_event = st['input_event']
         if old_event and not old_event.is_set():
-            _state['input_response'] = 'n'
-            _state['input_event'] = None
-            _thread_id = f"web-{uuid.uuid4().hex[:8]}"
+            st['input_response'] = 'n'
+            st['input_event'] = None
+            st['thread_id'] = f"web-{uuid.uuid4().hex[:8]}"
             old_event.set()
-        _state['active_rid'] = rid
-        _state['result'] = None
-        _state['error'] = None
-        _state['pending_prompt'] = None
-        _state['input_event'] = None
-        _state['stream_queue'] = None
-    _state['ready'].clear()
-    threading.Thread(target=_run_agent, args=(user_input, rid), daemon=True).start()
-    result = _wait_for_agent()
+        st['active_rid'] = rid
+        st['result'] = None
+        st['error'] = None
+        st['pending_prompt'] = None
+        st['input_event'] = None
+        st['stream_queue'] = None
+    st['ready'].clear()
+    threading.Thread(target=_run_agent, args=(user_input, rid, st), daemon=True).start()
+    result = _wait_for_agent(st)
     result['chat_id'] = chat_id
-    with _lock:
-        result['thread_id'] = _thread_id
+    with st['lock']:
+        result['thread_id'] = st['thread_id']
     return jsonify(result)
 
 
@@ -574,8 +616,9 @@ def chat():
 
 @app.route('/stream', methods=['POST'])
 @require_auth
+@limiter.limit("30 per minute")
 def stream_chat():
-    global _thread_id
+    st = _get_session_state()
     body = request.json or {}
     user_input = body.get('message', '').strip()
     chat_id = body.get('chat_id') or None
@@ -586,12 +629,12 @@ def stream_chat():
         with _db() as conn:
             row = conn.execute("SELECT thread_id FROM chats WHERE id = ?", (chat_id,)).fetchone()
         if row and row['thread_id']:
-            with _lock:
-                _thread_id = row['thread_id']
+            with st['lock']:
+                st['thread_id'] = row['thread_id']
     else:
         chat_id = uuid.uuid4().hex
-        with _lock:
-            tid = _thread_id
+        with st['lock']:
+            tid = st['thread_id']
         with _db() as conn:
             conn.execute(
                 "INSERT OR IGNORE INTO chats (id, title, messages, thread_id) VALUES (?, ?, ?, ?)",
@@ -601,31 +644,31 @@ def stream_chat():
     out_queue: queue.Queue = queue.Queue()
     rid = uuid.uuid4().hex
 
-    with _lock:
-        old_event = _state['input_event']
+    with st['lock']:
+        old_event = st['input_event']
         if old_event and not old_event.is_set():
-            _state['input_response'] = 'n'
-            _state['input_event'] = None
-            _thread_id = f"web-{uuid.uuid4().hex[:8]}"
+            st['input_response'] = 'n'
+            st['input_event'] = None
+            st['thread_id'] = f"web-{uuid.uuid4().hex[:8]}"
             old_event.set()
-        _state['active_rid'] = rid
-        _state['result'] = None
-        _state['error'] = None
-        _state['pending_prompt'] = None
-        _state['input_event'] = None
-        _state['stream_queue'] = out_queue
-    _state['ready'].clear()
+        st['active_rid'] = rid
+        st['result'] = None
+        st['error'] = None
+        st['pending_prompt'] = None
+        st['input_event'] = None
+        st['stream_queue'] = out_queue
+    st['ready'].clear()
 
     threading.Thread(
         target=_run_agent_streaming,
-        args=(user_input, rid, out_queue),
+        args=(user_input, rid, st, out_queue),
         daemon=True
     ).start()
 
     def generate():
         try:
-            with _lock:
-                tid = _thread_id
+            with st['lock']:
+                tid = st['thread_id']
             yield f"data: {json.dumps({'type': 'start', 'chat_id': chat_id, 'thread_id': tid})}\n\n"
 
             waiting_confirmation = False
@@ -650,9 +693,9 @@ def stream_chat():
                     break
         except GeneratorExit:
             # Client disconnected — invalidate this request so the agent thread exits early
-            with _lock:
-                if _state['active_rid'] == rid:
-                    _state['active_rid'] = None
+            with st['lock']:
+                if st['active_rid'] == rid:
+                    st['active_rid'] = None
 
     return Response(
         stream_with_context(generate()),
@@ -669,21 +712,22 @@ def stream_chat():
 @app.route('/confirm', methods=['POST'])
 @require_auth
 def confirm():
+    st = _get_session_state()
     answer = 'y' if (request.json or {}).get('confirmed') else 'n'
-    with _lock:
-        event = _state['input_event']
+    with st['lock']:
+        event = st['input_event']
         if not event or event.is_set():
             return jsonify({'error': 'No pending confirmation'}), 400
-        _state['input_response'] = answer
-        _state['input_event'] = None
-        is_streaming = _state['stream_queue'] is not None
-    _state['ready'].clear()
+        st['input_response'] = answer
+        st['input_event'] = None
+        is_streaming = st['stream_queue'] is not None
+    st['ready'].clear()
     event.set()
 
     if is_streaming:
         # SSE stream delivers subsequent tokens; just acknowledge
         return jsonify({'ok': True})
-    return jsonify(_wait_for_agent())
+    return jsonify(_wait_for_agent(st))
 
 
 if __name__ == '__main__':
