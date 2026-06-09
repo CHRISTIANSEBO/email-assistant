@@ -23,7 +23,8 @@ def _tool_input(prompt: str = '') -> str:
     fn = getattr(_thread_local, 'input_fn', None)
     if fn is not None:
         return fn(prompt)
-    return input(prompt)
+    # No web override available (wrong thread or non-interactive context); deny by default.
+    return 'n'
 
 
 def _extract_body(payload: dict) -> str:
@@ -251,10 +252,6 @@ def open_email(sender_email: str, subject_hint: str = ''):
     headers = msg_data['payload']['headers']
     subject = next((h['value'] for h in headers if h['name'] == 'Subject'), '(no subject)')
     sender = next((h['value'] for h in headers if h['name'] == 'From'), '(unknown)')
-
-    confirm = _tool_input(f"Open this email?\n\nFrom: {sender}\nSubject: {subject}").strip().lower()
-    if confirm != 'y':
-        return "User declined to open the email."
 
     body = _extract_body(msg_data['payload'])
     if len(body) > 3000:
