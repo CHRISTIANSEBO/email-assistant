@@ -37,7 +37,7 @@ const NAV = [
 ];
 
 export default function Sidebar({
-  collapsed, onToggle, onFetchInbox, onCompose, templates, onUseTemplate, onDeleteTemplate,
+  collapsed, onToggle: _onToggle, onFetchInbox, onCompose, templates, onUseTemplate, onDeleteTemplate,
   recentChats, onLoadChat, onDeleteChat, searchQuery, onSearchChange, onNewChat,
   profile, onSignOut,
 }: SidebarProps) {
