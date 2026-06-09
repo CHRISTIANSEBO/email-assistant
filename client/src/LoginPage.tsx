@@ -3,11 +3,21 @@ import './LoginPage.css';
 
 export default function LoginPage() {
   const [termsOpen, setTermsOpen] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
 
   const handleLogin = async () => {
-    const res = await fetch('/auth/login');
-    const { url } = await res.json();
-    window.location.href = url;
+    setLoginError(null);
+    try {
+      const res = await fetch('/auth/login');
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        setLoginError(data.error ?? 'Login failed. Please try again.');
+        return;
+      }
+      window.location.href = data.url;
+    } catch {
+      setLoginError('Could not reach the server. Please try again.');
+    }
   };
 
   return (
@@ -25,6 +35,7 @@ export default function LoginPage() {
           <GoogleIcon />
           Sign in with Google
         </button>
+        {loginError && <p className="login-error">{loginError}</p>}
         <p className="login-note">
           By signing in you agree to our{' '}
           <button type="button" className="login-terms-link" onClick={() => setTermsOpen(true)}>

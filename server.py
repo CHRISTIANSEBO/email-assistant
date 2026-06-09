@@ -366,6 +366,13 @@ def auth_status():
 
 @app.route('/auth/login')
 def auth_login():
+    from agent.file_handler import _CREDENTIALS_PATH
+    if not _CREDENTIALS_PATH.exists():
+        return jsonify({
+            'error': 'Google OAuth credentials not configured. '
+                     'Set the GOOGLE_CREDENTIALS_B64 environment variable or place credentials.json in the project root.'
+        }), 503
+
     # Prune expired OAuth states before adding a new one (Issue #7)
     now = time.time()
     expired = [k for k, (_, exp) in list(_oauth_states.items()) if now > exp]
@@ -373,10 +380,13 @@ def auth_login():
         _oauth_states.pop(k, None)
 
     state = secrets.token_urlsafe(16)
-    flow = create_web_flow(_CALLBACK_URL)
-    auth_url, _ = flow.authorization_url(
-        prompt='consent', access_type='offline', state=state
-    )
+    try:
+        flow = create_web_flow(_CALLBACK_URL)
+        auth_url, _ = flow.authorization_url(
+            prompt='consent', access_type='offline', state=state
+        )
+    except Exception as e:
+        return jsonify({'error': f'Failed to create OAuth flow: {e}'}), 503
     _oauth_states[state] = (getattr(flow, 'code_verifier', None), now + _OAUTH_STATE_TTL)
     return jsonify({'url': auth_url})
 
