@@ -1,0 +1,6 @@
+node_modules/
+package-lock.json
+_palette.png
+
+# Intermediate capture — the committed deliverable is jean-demo.gif / jean-demo.mp4
+jean-demo.webm
