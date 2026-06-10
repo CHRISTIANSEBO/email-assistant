@@ -31,7 +31,9 @@ into a video (`.mp4`/`.gif`) with one command, see [`demo/README.md`](demo/READM
 cd demo && npm install && npx playwright install chromium && node record.mjs
 ```
 
-![Jean in action](demo/research-agent-gif.gif)
+![Jean in action](demo/jean-demo.gif)
+
+> 🎥 Higher quality: [`demo/jean-demo.mp4`](demo/jean-demo.mp4)
 
 ![Jean chat interface](demo/research-agent-demo.png)
 
