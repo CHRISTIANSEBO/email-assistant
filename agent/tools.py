@@ -219,6 +219,12 @@ def unsubscribe_from_email(sender_email: str):
                 address = unsubscribe_address
                 subject = 'Unsubscribe'
 
+            # The header value comes from the sender (untrusted) — apply the
+            # same recipient validation as send_email before using it.
+            address = address.strip()
+            if not _EMAIL_RE.match(address):
+                return f"Unsubscribe header contains an invalid mailto address: {address}"
+
             confirm = _tool_input(
                 f"Send unsubscribe email to {address} with subject '{subject}'?"
             ).strip().lower()

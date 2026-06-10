@@ -76,6 +76,10 @@ const INBOX_LABELS: Record<string, string> = {
   sort: 'Priority',
 };
 
+// Cross-origin pages can't set custom headers, so the server requires this one
+// on every state-changing request as CSRF protection.
+const CSRF_HEADER = { 'X-Requested-With': 'fetch' };
+
 function parseMarkdown(text: string): string {
   function esc(s: string) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
   function inline(s: string) {
@@ -191,7 +195,7 @@ export default function App() {
   }, []);
 
   const signOut = async () => {
-    await fetch('/auth/logout', { method: 'POST' });
+    await fetch('/auth/logout', { method: 'POST', headers: CSRF_HEADER });
     setIsAuthenticated(false);
     setProfile(null);
   };
@@ -250,7 +254,7 @@ export default function App() {
     try {
       const res = await fetch('/stream', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
         body: JSON.stringify({ message: msg, chat_id: chatIdRef.current }),
         signal: controller.signal,
       });
@@ -356,7 +360,7 @@ export default function App() {
     const title = msgs.find(m => m.role === 'user')?.text.slice(0, 60) ?? 'Untitled';
     try {
       await fetch(`/chats/${id}/save`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...CSRF_HEADER },
         body: JSON.stringify({ messages: msgs, title, thread_id: tid }),
       });
       setRecentChats(prev => {
@@ -381,18 +385,18 @@ export default function App() {
       undoIntervalRef.current = setInterval(() => setUndoCountdown(c => c - 1), 1000);
       undoTimerRef.current = setTimeout(async () => {
         clearInterval(undoIntervalRef.current!); setUndoSend(false);
-        await fetch('/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmed: true }) });
+        await fetch('/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json', ...CSRF_HEADER }, body: JSON.stringify({ confirmed: true }) });
       }, 5000);
     } else {
       try {
-        await fetch('/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmed }) });
+        await fetch('/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json', ...CSRF_HEADER }, body: JSON.stringify({ confirmed }) });
       } catch { setError('Confirmation failed.'); setLoading(false); }
     }
   };
 
   const handleUndo = () => {
     clearTimeout(undoTimerRef.current!); clearInterval(undoIntervalRef.current!); setUndoSend(false);
-    fetch('/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmed: false }) }).catch(e => console.error('Failed to cancel confirmation', e));
+    fetch('/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json', ...CSRF_HEADER }, body: JSON.stringify({ confirmed: false }) }).catch(e => console.error('Failed to cancel confirmation', e));
   };
 
   // ── Chat management ───────────────────────────────────────────────────────
@@ -477,7 +481,7 @@ export default function App() {
 
   const deleteChat = async (id: string) => {
     try {
-      await fetch(`/chats/${id}`, { method: 'DELETE' });
+      await fetch(`/chats/${id}`, { method: 'DELETE', headers: CSRF_HEADER });
       setRecentChats(prev => prev.filter(c => c.id !== id));
       if (chatIdRef.current === id) newChat();
     } catch {}
@@ -493,7 +497,7 @@ export default function App() {
 
   const deleteTemplate = async (id: string) => {
     try {
-      await fetch(`/templates/${id}`, { method: 'DELETE' });
+      await fetch(`/templates/${id}`, { method: 'DELETE', headers: CSRF_HEADER });
       setTemplates(prev => prev.filter(t => t.id !== id));
     } catch {}
   };

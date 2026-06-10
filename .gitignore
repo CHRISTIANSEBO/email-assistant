@@ -20,3 +20,6 @@ conversations/
 
 # Deployment secrets
 railway-variables.json
+
+# Local SQLite database (created at runtime; holds encrypted user credentials)
+chats.db
