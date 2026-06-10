@@ -66,6 +66,7 @@ def _load_credentials_cli() -> Credentials:
 
         with open(_TOKEN_PATH, 'w') as token:
             token.write(creds.to_json())
+        os.chmod(_TOKEN_PATH, 0o600)
 
     return creds
 

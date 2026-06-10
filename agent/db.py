@@ -27,6 +27,32 @@ def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, dd
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
 
 
+# Ordered list of incremental migrations applied after the base schema is
+# created. Each entry is (version, list of SQL statements). New migrations
+# should be appended with the next sequential version number.
+_MIGRATIONS: list[tuple[int, list[str]]] = []
+
+
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER NOT NULL
+        )
+    """)
+    row = conn.execute("SELECT version FROM schema_version").fetchone()
+    current = row['version'] if row else 0
+    for version, statements in _MIGRATIONS:
+        if version <= current:
+            continue
+        for stmt in statements:
+            conn.execute(stmt)
+        current = version
+    if row is None:
+        conn.execute("INSERT INTO schema_version (version) VALUES (?)", (current,))
+    else:
+        conn.execute("UPDATE schema_version SET version = ?", (current,))
+
+
 def init_db() -> None:
     with get_connection() as conn:
         conn.execute("""
@@ -64,6 +90,7 @@ def init_db() -> None:
         """)
         _add_column_if_missing(conn, 'templates', 'user_id', "user_id TEXT NOT NULL DEFAULT ''")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_templates_user ON templates(user_id)")
+        _apply_migrations(conn)
 
 
 # ── Credential encryption ──────────────────────────────────────────────────

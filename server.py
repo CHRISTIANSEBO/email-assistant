@@ -192,9 +192,11 @@ def _run_agent(user_input: str, rid: str, st: dict, user_id: str) -> None:
                 st['error'] = None
     except Exception as e:
         msg = str(e)
-        err = ("I'm being rate-limited right now. Wait a moment and try again."
-               if '429' in msg or 'rate_limit' in msg.lower()
-               else f"Something went wrong: {type(e).__name__}: {e}")
+        if '429' in msg or 'rate_limit' in msg.lower():
+            err = "I'm being rate-limited right now. Wait a moment and try again."
+        else:
+            app.logger.exception("Agent error")
+            err = "Something went wrong. Please try again."
         with st['lock']:
             if st['active_rid'] == rid:
                 st['error'] = err
@@ -213,7 +215,7 @@ def _generate_quick_replies(email_content: str) -> list:
     try:
         client = _anthropic.Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
         resp = client.messages.create(
-            model='claude-haiku-4-5-20251001',
+            model=os.getenv('CLAUDE_MODEL', 'claude-haiku-4-5-20251001'),
             max_tokens=120,
             messages=[{
                 'role': 'user',
@@ -328,9 +330,11 @@ def _run_agent_streaming(user_input: str, rid: str, st: dict, out_queue: queue.Q
                 out_queue.put({'type': 'done', 'thread_id': st['thread_id']})
     except Exception as e:
         msg = str(e)
-        err = ("I'm being rate-limited right now. Wait a moment and try again."
-               if '429' in msg or 'rate_limit' in msg.lower()
-               else f"Something went wrong: {type(e).__name__}: {e}")
+        if '429' in msg or 'rate_limit' in msg.lower():
+            err = "I'm being rate-limited right now. Wait a moment and try again."
+        else:
+            app.logger.exception("Agent streaming error")
+            err = "Something went wrong. Please try again."
         with st['lock']:
             if st['active_rid'] == rid:
                 out_queue.put({'type': 'error', 'message': err})
@@ -373,6 +377,7 @@ def auth_status():
 
 
 @app.route('/auth/login')
+@limiter.limit("10 per minute")
 def auth_login():
     from agent.file_handler import _CREDENTIALS_PATH
     if not _CREDENTIALS_PATH.exists():
@@ -467,10 +472,11 @@ def admin_list_users():
 @app.route('/chats', methods=['GET'])
 @require_auth
 def list_chats():
+    offset = request.args.get('offset', 0, type=int)
     with _db() as conn:
         rows = conn.execute(
-            "SELECT id, title FROM chats WHERE user_id = ? ORDER BY created_at DESC LIMIT 50",
-            (session['user_id'],)
+            "SELECT id, title FROM chats WHERE user_id = ? ORDER BY created_at DESC LIMIT 50 OFFSET ?",
+            (session['user_id'], offset)
         ).fetchall()
     return jsonify([dict(r) for r in rows])
 
@@ -534,6 +540,7 @@ def search_chats():
 
 @app.route('/templates', methods=['GET'])
 @require_auth
+@limiter.limit("30 per minute")
 def list_templates():
     with _db() as conn:
         rows = conn.execute(
@@ -545,6 +552,7 @@ def list_templates():
 
 @app.route('/templates', methods=['POST'])
 @require_auth
+@limiter.limit("30 per minute")
 def create_template():
     body = request.json or {}
     tid = uuid.uuid4().hex
@@ -558,6 +566,7 @@ def create_template():
 
 @app.route('/templates/<template_id>', methods=['DELETE'])
 @require_auth
+@limiter.limit("30 per minute")
 def delete_template(template_id: str):
     with _db() as conn:
         conn.execute("DELETE FROM templates WHERE id = ? AND user_id = ?", (template_id, session['user_id']))
@@ -576,9 +585,10 @@ _CATEGORY_LABEL = {
 
 @app.route('/inbox', methods=['GET'])
 @require_auth
+@limiter.limit("10 per minute")
 def get_inbox():
     from agent.tools import _get_service, _fetch_one_headers, _submit_with_context, URGENT_KEYWORDS
-    from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
+    from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed, TimeoutError as _FutureTimeoutError
 
     _tools_current_user_id.set(session['user_id'])
 
@@ -602,7 +612,12 @@ def get_inbox():
 
         with ThreadPoolExecutor(max_workers=min(len(msg_ids), 10)) as ex:
             futures = {_submit_with_context(ex, _fetch_one_headers, mid): mid for mid in msg_ids}
-            emails = [f.result() for f in _as_completed(futures)]
+            emails = []
+            try:
+                for f in _as_completed(futures, timeout=15):
+                    emails.append(f.result())
+            except _FutureTimeoutError:
+                pass
 
         if sort_by == 'priority':
             for e in emails:
@@ -773,6 +788,7 @@ def stream_chat():
 
 @app.route('/confirm', methods=['POST'])
 @require_auth
+@limiter.limit("30 per minute")
 def confirm():
     st = _get_session_state()
     answer = 'y' if (request.json or {}).get('confirmed') else 'n'

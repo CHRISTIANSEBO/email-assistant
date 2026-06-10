@@ -4,19 +4,24 @@ import './LoginPage.css';
 export default function LoginPage() {
   const [termsOpen, setTermsOpen] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [loggingIn, setLoggingIn] = useState(false);
 
   const handleLogin = async () => {
+    if (loggingIn) return;
     setLoginError(null);
+    setLoggingIn(true);
     try {
       const res = await fetch('/auth/login');
       const data = await res.json();
       if (!res.ok || data.error) {
         setLoginError(data.error ?? 'Login failed. Please try again.');
+        setLoggingIn(false);
         return;
       }
       window.location.href = data.url;
     } catch {
       setLoginError('Could not reach the server. Please try again.');
+      setLoggingIn(false);
     }
   };
 
@@ -31,9 +36,8 @@ export default function LoginPage() {
         </div>
         <h1 className="login-title">Jean</h1>
         <p className="login-sub">Your personal email assistant</p>
-        <button type="button" className="login-google-btn" onClick={handleLogin}>
-          <GoogleIcon />
-          Sign in with Google
+        <button type="button" className="login-google-btn" onClick={handleLogin} disabled={loggingIn}>
+          {loggingIn ? 'Redirecting...' : (<><GoogleIcon />Sign in with Google</>)}
         </button>
         {loginError && <p className="login-error">{loginError}</p>}
         <p className="login-note">
