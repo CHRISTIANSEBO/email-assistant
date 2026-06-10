@@ -4,7 +4,7 @@
 
 **Talk to your inbox.** Jean reads, sorts, drafts, sends, and unsubscribes from your Gmail — all through a conversational chat interface powered by Claude.
 
-[Live Demo](#demo) · [Features](#features) · [Quick Start](#quick-start) · [How It Works](#how-it-works) · [Deployment](#deployment)
+[Features](#features) · [Quick Start](#quick-start) · [How It Works](#how-it-works) · [Deployment](#deployment)
 
 </div>
 
@@ -19,23 +19,6 @@ A busy inbox is a tax on your attention. Promotions and low-priority mail bury t
 Jean is a [ReAct](https://arxiv.org/abs/2210.03629) agent that manages your inbox the way you'd ask a capable assistant to: in plain language. Tell it _"what's urgent?"_, _"open the one from my manager"_, _"reply that I'm on it"_, or _"unsubscribe me from these promos"_ — and it does it, showing your mail as visual cards and asking for a one-tap confirmation before it ever opens private mail or sends on your behalf.
 
 It's a full multi-user web app: sign in with Google, and your Gmail tokens are encrypted at rest and scoped to your account alone.
-
-## Demo
-
-> **▶ [Open the interactive demo](https://htmlpreview.github.io/?https://github.com/CHRISTIANSEBO/email-assistant/blob/master/demo/index.html)** — a self-contained, no-backend walkthrough that replays a real Jean conversation (reading the inbox → email cards → opening a message → quick replies → sending), right in your browser. No sign-in, no real inbox.
-
-To run the demo locally, just open `demo/index.html` in any browser. To turn it
-into a video (`.mp4`/`.gif`) with one command, see [`demo/README.md`](demo/README.md):
-
-```bash
-cd demo && npm install && npx playwright install chromium && node record.mjs
-```
-
-![Jean in action](demo/jean-demo.gif)
-
-> 🎥 Higher quality: [`demo/jean-demo.mp4`](demo/jean-demo.mp4)
-
-![Jean chat interface](demo/research-agent-demo.png)
 
 ## Features
 
@@ -239,8 +222,6 @@ email-assistant/
 │       ├── ComposePanel.tsx # Manual compose
 │       ├── AdminPanel.tsx   # Connected-users view (admins only)
 │       └── DarkVeil/StaggeredMenu/SplitText  # GSAP + WebGL UI flourishes
-├── demo/
-│   └── index.html          # Self-contained interactive demo (no backend)
 ├── tests/                  # pytest suite (tools + server)
 ├── Dockerfile · Procfile · railway.toml · nixpacks.toml
 └── .env.example
