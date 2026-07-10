@@ -270,7 +270,9 @@ export default function App() {
         const filtered = prev.filter(c => c.id !== id);
         return [{ id, title }, ...filtered].slice(0, 50);
       });
-    } catch {}
+    } catch (err) {
+      console.error('Failed to save chat:', err);
+    }
   };
 
   // ── Confirm / undo ────────────────────────────────────────────────────────
@@ -387,7 +389,9 @@ export default function App() {
       await fetch(`/chats/${id}`, { method: 'DELETE', headers: CSRF_HEADER });
       setRecentChats(prev => prev.filter(c => c.id !== id));
       if (chatIdRef.current === id) newChat();
-    } catch {}
+    } catch (err) {
+      console.error('Failed to delete chat:', err);
+    }
   };
 
   const useTemplate = (t: TemplateItem) => {
@@ -402,7 +406,9 @@ export default function App() {
     try {
       await fetch(`/templates/${id}`, { method: 'DELETE', headers: CSRF_HEADER });
       setTemplates(prev => prev.filter(t => t.id !== id));
-    } catch {}
+    } catch (err) {
+      console.error('Failed to delete template:', err);
+    }
   };
 
   const isEmpty = messages.length === 0 && !loading && !streamingText && streamingEmails.length === 0 && inboxView === null && unsubView === null;
@@ -429,6 +435,8 @@ export default function App() {
         onSignOut={signOut}
         onOpenAdmin={() => { setAdminOpen(true); setMobileSidebarOpen(false); }}
         templates={templates}
+        // useTemplate is a plain handler, not a React hook (eslint mis-flags the `use` prefix).
+        // eslint-disable-next-line react-hooks/rules-of-hooks
         onUseTemplate={(t) => { useTemplate(t); setMobileSidebarOpen(false); }}
         onDeleteTemplate={deleteTemplate}
         recentChats={recentChats}

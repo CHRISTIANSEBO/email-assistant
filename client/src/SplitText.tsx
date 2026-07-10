@@ -47,7 +47,10 @@ const SplitText: React.FC<SplitTextProps> = ({
   }, [onLetterAnimationComplete]);
 
   useEffect(() => {
+    // Sync to the browser Font Loading API (an external system): render text
+    // only once fonts are ready so GSAP measures final glyph positions.
     if (document.fonts.status === 'loaded') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setFontsLoaded(true);
     } else {
       document.fonts.ready.then(() => setFontsLoaded(true));
@@ -62,7 +65,11 @@ const SplitText: React.FC<SplitTextProps> = ({
       const el = ref.current as HTMLElement & { _rbsplitInstance?: GSAPSplitText };
 
       if (el._rbsplitInstance) {
-        try { el._rbsplitInstance.revert(); } catch (_) {}
+        try {
+          el._rbsplitInstance.revert();
+        } catch {
+          /* revert can throw if the DOM was already torn down; safe to ignore */
+        }
         el._rbsplitInstance = undefined;
       }
 
@@ -114,7 +121,11 @@ const SplitText: React.FC<SplitTextProps> = ({
 
       return () => {
         ScrollTrigger.getAll().forEach(st => { if (st.trigger === el) st.kill(); });
-        try { splitInstance.revert(); } catch (_) {}
+        try {
+          splitInstance.revert();
+        } catch {
+          /* revert can throw during unmount if the DOM is gone; safe to ignore */
+        }
         el._rbsplitInstance = undefined;
       };
     },

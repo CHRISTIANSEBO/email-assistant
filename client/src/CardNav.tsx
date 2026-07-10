@@ -66,7 +66,7 @@ const CardNav: React.FC<CardNavProps> = ({
         contentEl.style.pointerEvents = 'auto';
         contentEl.style.position = 'static';
         contentEl.style.height = 'auto';
-        contentEl.offsetHeight;
+        void contentEl.offsetHeight; // force reflow so scrollHeight is accurate
         const total = 60 + 16 + contentEl.scrollHeight;
         Object.assign(contentEl.style, prev);
         return total;
