@@ -18,7 +18,7 @@ def _b64(text: str) -> str:
 
 # Import after patching authenticate_gmail so the module loads without OAuth
 with patch("agent.file_handler.authenticate_gmail", return_value=MagicMock()):
-    from agent.tools import _extract_body, _html_to_text, URGENT_KEYWORDS
+    from agent.tools import _extract_body, _html_to_text, _header, URGENT_KEYWORDS
 
 
 class TestExtractBody:
@@ -99,6 +99,25 @@ class TestHtmlToText:
         # A < in plain text must NOT be mangled by HTML parsing.
         payload = {"mimeType": "text/plain", "body": {"data": _b64("a < b and c > d")}}
         assert _extract_body(payload) == "a < b and c > d"
+
+
+class TestHeaderLookup:
+    def test_exact_case_match(self):
+        headers = [{"name": "Subject", "value": "Hello"}]
+        assert _header(headers, "Subject") == "Hello"
+
+    def test_case_insensitive_match(self):
+        # RFC 5322 header names are case-insensitive; senders vary the case.
+        headers = [{"name": "subject", "value": "lower"}, {"name": "FROM", "value": "a@b.com"}]
+        assert _header(headers, "Subject") == "lower"
+        assert _header(headers, "From") == "a@b.com"
+
+    def test_missing_header_returns_default(self):
+        assert _header([], "Subject", "(no subject)") == "(no subject)"
+
+    def test_malformed_header_without_name_key(self):
+        headers = [{"value": "orphan"}, {"name": "Subject", "value": "ok"}]
+        assert _header(headers, "Subject") == "ok"
 
 
 class TestSummarizeEmail:

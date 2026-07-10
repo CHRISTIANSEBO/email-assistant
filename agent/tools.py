@@ -94,6 +94,16 @@ def _html_to_text(html: str) -> str:
         return html
 
 
+def _header(headers: list, name: str, default: str = '') -> str:
+    """Look up an email header value case-insensitively.
+
+    RFC 5322 header field names are case-insensitive, and the Gmail API returns
+    them with whatever case the sender used, so `Subject`/`subject`/`SUBJECT`
+    must all match."""
+    name = name.lower()
+    return next((h['value'] for h in headers if h.get('name', '').lower() == name), default)
+
+
 def _extract_body(payload: dict) -> str:
     """Recursively extract plain-text body from a Gmail message payload.
 
@@ -127,8 +137,8 @@ def _fetch_one(msg_id: str) -> dict:
     msg_data = svc.users().messages().get(userId='me', id=msg_id, format='full').execute()
     headers = msg_data['payload']['headers']
     return {
-        'subject': next((h['value'] for h in headers if h['name'] == 'Subject'), '(no subject)'),
-        'sender': next((h['value'] for h in headers if h['name'] == 'From'), '(unknown)'),
+        'subject': _header(headers, 'Subject', '(no subject)'),
+        'sender': _header(headers, 'From', '(unknown)'),
         'body': _extract_body(msg_data['payload']),
     }
 
@@ -153,8 +163,8 @@ def _fetch_one_headers(msg_id: str) -> dict:
     _scan_parts(msg_data['payload'].get('parts', []))
 
     return {
-        'subject': next((h['value'] for h in headers if h['name'] == 'Subject'), '(no subject)'),
-        'sender': next((h['value'] for h in headers if h['name'] == 'From'), '(unknown)'),
+        'subject': _header(headers, 'Subject', '(no subject)'),
+        'sender': _header(headers, 'From', '(unknown)'),
         'attachments': attachments,
     }
 
@@ -259,7 +269,7 @@ def unsubscribe_from_email(sender_email: str):
         headers = msg_data['payload']['headers']
 
         unsubscribe_header = next(
-            (h['value'] for h in headers if h['name'].lower() == 'list-unsubscribe'),
+            (h['value'] for h in headers if h.get('name', '').lower() == 'list-unsubscribe'),
             None
         )
 
@@ -328,8 +338,8 @@ def open_email(sender_email: str, subject_hint: str = ''):
 
     msg_data = _get_service().users().messages().get(userId='me', id=messages[0]['id'], format='full').execute()
     headers = msg_data['payload']['headers']
-    subject = next((h['value'] for h in headers if h['name'] == 'Subject'), '(no subject)')
-    sender = next((h['value'] for h in headers if h['name'] == 'From'), '(unknown)')
+    subject = _header(headers, 'Subject', '(no subject)')
+    sender = _header(headers, 'From', '(unknown)')
 
     confirm = _tool_input(f"Open this email?\n\nFrom: {sender}\nSubject: {subject}").strip().lower()
     if confirm != 'y':
