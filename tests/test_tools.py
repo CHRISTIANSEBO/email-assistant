@@ -64,6 +64,17 @@ class TestExtractBody:
         assert _extract_body(payload) == "Nested plain"
 
 
+class TestSummarizeEmail:
+    def test_summarize_email_formats_correctly(self):
+        msg = {"subject": "Test Subject", "sender": "a@b.com", "body": "Hello there"}
+        # Import inside to avoid side effects
+        from agent.tools import summarize_email
+        result = summarize_email.invoke({"msg": msg})
+        assert "Subject: Test Subject" in result
+        assert "From: a@b.com" in result
+        assert "Body: Hello there" in result
+
+
 # ---------------------------------------------------------------------------
 # send_email — email validation
 # ---------------------------------------------------------------------------
